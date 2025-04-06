@@ -1,0 +1,28 @@
+under dyy's Pano2Room mirror enviromnent in autodl
+
+in ./gaussian_renderer/init.py line 14
+    alter: from depth_diff_gaussian_rasterization_min import GaussianRasterizationSettings, GaussianRasterizer
+    to: from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+    which origianlly is a wrong import
+in ./gaussian_renderer/__init__.py line 48:
+    remove 'debug=opt.debug'
+    for this method has been updated
+in ./modules/inpainters/lama_inpainter.py line 15
+in ./geo_predictors/omnidata/omnidata_predictor.py line 38
+in ./geo_predictors/omnidata/omnidata_normal_predictor.py line 18
+    change ckpt_path to .checkpoint/XXX
+    and download checkpoint to this new file_path
+    for the original ./checkpoints can't be opened
+
+more information can be seen at https://github.com/TrickyGo/Pano2Room/issues
+especially #2 Installation guide
+the requirements provided by the original author contain many errors
+
+checkpoint_file can be downloaded at https://www.dropbox.com/scl/fo/348s01x0trt0yxb934cwe/h?rlkey=a96g2incso7g53evzamzo0j0y&dl=0
+
+I've finish all code annotation in ./pano2room.py 
+and is going to writh altered version containg some of our ideas as ./pano2room_alter.py
+Now comes the ./pano2room_alter_1.py with a 4th tunnel added to RGB which indicates that which object a cloud point (i.e. a vertice) is belonged to
+but (of course) I haven't finish it yet
+
+sft at 24.4.5
