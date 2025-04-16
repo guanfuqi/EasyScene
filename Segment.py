@@ -269,17 +269,48 @@ def apply_mask(image, mask):
 
 def visualize(image, class_num):
     # 分类结果可视化
-    colors = np.linspace(0, 255, class_num).astype(np.uint8)
+    colors = np.linspace(0, 255, class_num + 1).astype(np.uint8)
     image[:, :] = colors[image[:, :]]
     return Image.fromarray(image.astype(np.uint8), mode = 'L')
-    
+
+def segment_pano(pano, class_names):
+    pano = pano.numpy()
+    print('加载相机……')
+    poses = functions.get_cubemap_views_world_to_cam()
+    poses = [pose[:3].numpy() for pose in poses]
+    fov = 90
+    H, W = 512, 512
+
+    images = []
+    print('加载透视图……')
+    for i, pose in enumerate(poses):
+        images.append(equi2pers(pano, pose, fov, 512, 512))
+        Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
+
+    print('分割透视图……')
+    segmented_images = segment(images, class_names)
+
+    for i, segmented_image in enumerate(segmented_images):
+        visualize(segmented_image.detach().cpu().numpy(), len(class_names)).save(
+            f'output/20250312193327/seg/segpers/{i}.jpg')
+
+    print('映射回全景图……')
+    out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1])
+
+    print('分割结果可视化……')
+    segmented_pano = visualize(out, len(class_names))
+    # segmented_pano.show()
+    segmented_pano.save('output/20250312193327/seg_pao.jpg')
+
+    return torch.from_numpy(out)
+
 if __name__ == "__main__":
 
     import time
     st = time.time()
     print('加载场景图……')
 
-    from SceneGraph.SceneGraph import SceneGraph
+    from SceneGraph import SceneGraph
     with open('input/text.txt', 'r') as f:
         text = f.read()
 

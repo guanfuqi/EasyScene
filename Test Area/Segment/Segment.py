@@ -1,23 +1,18 @@
 import cv2  # type: ignore
 
 from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
-from segment_anything import build_sam, SamPredictor 
 
 import argparse
-import json
 import os
 import numpy as np
-from typing import Any, Dict, List
+from typing import Any, List
 
 from tqdm import tqdm
-import colorsys
 import random
 import clip
 import torch
-from clip_text import class_names_coco, class_names_ADE_150
-from PIL import Image 
+from PIL import Image
 import torch.nn.functional as F
-from pano2room.utils.camera_utils import img_to_pano_coord, pano_to_img_coord
 from pano2room.utils.camera_utils import look_at
 from trimesh.creation import icosphere
 import math
@@ -328,7 +323,7 @@ if __name__ == "__main__":
 
     print('加载场景图……')
 
-    from SceneGraph.SceneGraph import SceneGraph
+    from SceneGraph import SceneGraph
     with open('input/text.txt', 'r') as f:
         text = f.read()
 

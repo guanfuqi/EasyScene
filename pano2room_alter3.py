@@ -36,6 +36,8 @@ from utils.graphics import focal2fov
 from utils.loss import l1_loss, ssim
 from random import randint
 
+import Segment
+from SceneGraph import SceneGraph
 '''
 STRUCTURE
 
@@ -145,6 +147,12 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.cubemap_w2c_list = functions.get_cubemap_views_world_to_cam()
 
         self.load_modules()
+
+        print('加载场景图……')
+        with open('input/text.txt', 'r') as f:
+            text = f.read()
+
+        self.scene_graph = SceneGraph(text, exist=True, exist_path='output/20250312193327')
 
 
 
@@ -748,9 +756,20 @@ class Pano2RoomPipeline(torch.nn.Module):
         环形摆动形成相机位姿的字典'''
 
 
-    def pano_segment(self, pano_tensor):
+    def pano_segment(self, pano_tensor, class_names):
+        """
 
-        return label_tensor, label_num, evironment_label
+        Args:
+            pano_tensor: Tensor[H,W,3]
+            class_names: List[N]
+
+        Returns:label_tensor, label_num, evironment_label
+
+        """
+        environment_label = -1
+        label_num = len(class_names)
+        label_tensor = Segment.segment_pano(pano_tensor, class_names)
+        return label_tensor, label_num, environment_label
         '''label_tensor: 形状(N, 3) 其中第一通道为分割标签（非负整数）
         label_num 总标签数
         environment_label 环境所对应的标签'''

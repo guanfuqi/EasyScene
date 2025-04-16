@@ -1,4 +1,4 @@
-from SceneGraph.SceneGraph import SceneGraph
+from SceneGraph import SceneGraph
 with open('input/text.txt', 'r') as f:
     text = f.read()
 
