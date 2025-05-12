@@ -2,7 +2,7 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/Segment-Anything-CLIP" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/pano2room" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/Segment-Anything-CLIP" vcs="" />
+    <mapping directory="$PROJECT_DIR$/pano2room" vcs="" />
   </component>
 </project>
