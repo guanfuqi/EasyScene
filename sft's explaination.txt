@@ -1,0 +1,40 @@
+under dyy's Pano2Room mirror enviromnent in autodl
+
+in ./gaussian_renderer/init.py line 14
+    alter: from depth_diff_gaussian_rasterization_min import GaussianRasterizationSettings, GaussianRasterizer
+    to: from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+    which origianlly is a wrong import
+in ./gaussian_renderer/__init__.py line 48:
+    remove 'debug=opt.debug'
+    for this method has been updated
+in ./modules/inpainters/lama_inpainter.py line 15
+in ./geo_predictors/omnidata/omnidata_predictor.py line 38
+in ./geo_predictors/omnidata/omnidata_normal_predictor.py line 18
+    change ckpt_path to .checkpoint/XXX
+    and download checkpoint to this new file_path
+    for the original ./checkpoints can't be opened
+
+more information can be seen at https://github.com/TrickyGo/Pano2Room/issues
+especially #2 Installation guide
+the requirements provided by the original author contain many errors
+
+checkpoint_file can be downloaded at https://www.dropbox.com/scl/fo/348s01x0trt0yxb934cwe/h?rlkey=a96g2incso7g53evzamzo0j0y&dl=0
+
+I've finish all code annotation in ./pano2room.py 
+and is going to writh altered version containg some of our ideas as ./pano2room_alter.py
+Now comes the ./pano2room_alter_1.py with a 4th tunnel added to RGB which indicates that which object a cloud point (i.e. a vertice) is belonged to
+but (of course) I haven't finish it yet
+
+sft at 25.4.5
+
+
+
+Pano2Room为大一年度项目的主体框架
+Pano2Room_init为初始项目
+Pano2Room_annotated中完成了注释工作
+Pano2Room_alter专注于添加“分割标签”这一第四通道，目前有如下几种思路：
+Pano2Room_alter_1（已废止）试图在mesh结构中与rgb并列地加入feature通道，因无力改动Trimesh代码而废止
+Pano2Room_alter_2（未开始）则考虑单独维护一个列表以存储feature，通过索引与mesh_vertice建立对应关系，暂缓进行
+Pano2Room_alter_3（进行中）维护了两个共用拓扑结构的mesh，其中一个称为rgb而另一个为pseudo_rgb，具体而言，使用rgb中的第一个通道存储segment_label而另两个通道值均为0。目前其中缺少load_object_pose与pano_segment两个方法
+Pano2Room_alter_4（实验性）试图将feature的值作为虚部直接打在rgb通道中
+sft at 25.4.11
