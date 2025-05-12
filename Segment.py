@@ -284,7 +284,11 @@ def segment_pano(pano, class_names):
     images = []
     print('加载透视图……')
     for i, pose in enumerate(poses):
+<<<<<<< HEAD
         images.append(equi2pers(pano, pose, fov, H, W))
+=======
+        images.append(equi2pers(pano, pose, fov, 512, 512))
+>>>>>>> 4c74ee80f5cc58904d9249f1e942603975363cae
         Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
 
     print('分割透视图……')
