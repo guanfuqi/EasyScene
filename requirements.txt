@@ -232,7 +232,6 @@ yacs==0.1.8
 yapf==0.40.2
 yarl==1.9.2
 zipp==3.17.0
-
 typing==3.7.4.3
 openai==1.77.0
 segment-anything==1.0

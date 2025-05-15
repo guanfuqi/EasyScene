@@ -35,7 +35,8 @@ class OmnidataPredictor(GeoPredictor):
     def __init__(self):
         super().__init__()
         self.img_size = 384
-        ckpt_path = './checkpoints/omnidata_dpt_depth_v2.ckpt'
+#        ckpt_path = './checkpoints/omnidata_dpt_depth_v2.ckpt'
+        ckpt_path = './checkpoint/omnidata_dpt_depth_v2.ckpt'
         self.model = DPTDepthModel(backbone='vitb_rn50_384', num_channels=1)
         self.model.to(torch.device('cpu'))
         checkpoint = torch.load(ckpt_path, map_location=torch.device('cpu'))
