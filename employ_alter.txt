@@ -1,0 +1,9 @@
+修改了文件结构
+
+in  Segment line 301:
+delete: pano = pano.numpy()
+
+in Segment line 304:
+alter: poses = [pose[:3].numpy() for pose in poses]
+to: poses = [pose[:3].cpu().numpy() for pose in poses]
+
