@@ -242,7 +242,7 @@ def segment(images:List, class_names:List):
     results = []
 
     # 加载SAM
-    checkpoint = './sam_vit_h_4b8939.pth'
+    checkpoint = './checkpoint/sam_vit_h_4b8939.pth'
     mode_type = 'vit_h'
     sam = sam_model_registry[mode_type](checkpoint = checkpoint)
     masks_generator = SamAutomaticMaskGenerator(sam)

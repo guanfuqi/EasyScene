@@ -441,7 +441,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             # apply_GeoCheck:
             perf_pose = pose.clone()
             perf_pose[0,3], perf_pose[1,3], perf_pose[2,3] = -pose[0,3], pose[2,3], 0 
-            rays = gen_pano_rays(perf_pose, self.pano_height, self.pano_width)
+            rays = gen_pano_rays(perf_pose.cuda(), self.pano_height.cuda(), self.pano_width.cuda())
             conflict_mask = self.sup_pool.geo_check(rays, distances.unsqueeze(-1))# 0 conflict, 1 not conflict
             pano_inpaint_mask = pano_inpaint_mask * conflict_mask 
             
