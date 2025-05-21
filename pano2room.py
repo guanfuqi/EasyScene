@@ -784,8 +784,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         print("main_cam shape:", main_cam.shape)
         obj_radius = np.linalg.norm(obj - main_cam)
         cam_radius_diff = 10
-        pose_select_num = 6
-        circle_num = 3
+        pose_select_num = 1
+        circle_num = 1
         '''这里的三个参数应该都与size有关 这里暂时处理成定值'''
 
         object_poses_dict = {}
@@ -846,7 +846,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         
         environment_label = -1
         label_num = len(self.class_names)
-        label_tensor = Segment.segment_pano(pano_tensor, self.class_names)
+        with torch.no_grad():
+            label_tensor = Segment.segment_pano(pano_tensor, self.class_names)
         
         label_tensor = torch.stack([
             label_tensor,
@@ -918,6 +919,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                 continue
             print(f"==========########## inpaint object #{label} ##########==========")
             inpainted_panos_and_poses.extend(self.object_inpaint(label[0], main_cam))
+            torch.cuda.empty_cache()
             '''对单个物体的处理'''
 
         bg_pose_dict = self.load_inpaint_poses()

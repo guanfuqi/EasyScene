@@ -22,6 +22,7 @@ from utils.camera_utils import look_at
 from trimesh.creation import icosphere
 import math
 from utils import functions
+
 def generate_spherical_cam_poses(subdivisions = 2) -> torch.Tensor:
     """
     生成20个相机以覆盖球面
