@@ -745,7 +745,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         INPUT:label OUTPUT:object_tensor
         '''
 
-        mask = (self.labels[0] == label)
+        mask = (self.labels[0] - label < 1e-4)
         object_tensor = self.vertices[:, mask]
     
         return object_tensor
@@ -950,7 +950,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             for i in range(len(cubemaps)):
                 inpainted_img = cubemaps[i]
 
-                mesh_pose = self.cubemap_w2c_list[i].cuda() @ pano_pose_44.clone()
+                mesh_pose = self.cubemap_w2c_list[i].cuda() @ pano_pose_44.type(torch.float32).clone().cuda()
 
                 pose_44 = mesh_pose.clone()
                 pose_44 = pose_44.float()
@@ -972,6 +972,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                     'fovx': focal2fov(256, inpainted_img.shape[-1]),# focal2fov(focal, pixels) = 2*math.atan(pixels/(2*focal))
                     'mesh_pose': mesh_pose
                 })
+                print(i)
                 '''frame的结构'''
 
 
