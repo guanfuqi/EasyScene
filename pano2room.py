@@ -37,6 +37,7 @@ from utils.loss import l1_loss, ssim
 from random import randint
 
 from SceneGraph import SceneGraph
+from Segment import Segmentor
 
 '''
 STRUCTURE
@@ -171,6 +172,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.scene_graph = SceneGraph(text, exist=True, exist_path='output/20250312193327')
 
         self.class_names = self.scene_graph.extract_objects_names()
+        self.segmentor = Segmentor(self.class_names)
 
 
     def load_modules(self):
@@ -188,6 +190,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         '''
 
         # project mesh into pose and render (rgb, depth, mask)
+        # 注意：空白投影区域mask为1
         rendered_image_tensor, self.rendered_depth, self.inpaint_mask, self.pix_to_face, self.z_buf, self.mesh = render_mesh(
             vertices=self.vertices,
             faces=self.faces,
@@ -413,12 +416,12 @@ class Pano2RoomPipeline(torch.nn.Module):
             '''选取完整度2/3分位的pose进行inpaint 处理既可能不完整但是不是最困难的pose'''
 
             # rendering rgb depth mask
-            pano_rgb, pano_distance, pano_mask = self.render_pano(pose.cuda())# 渲染出此时视图
+            pano_rgb, pano_distance, pano_mask = self.render_pano(pose.cuda())# 渲染出此时视图 CHW,HW,HW
 
             # inpaint pano
-            colors = pano_rgb.permute(1,2,0).clone()
-            labels, _, _ = self.pano_segment(colors.cpu().numpy())
-            labels = labels.permute(1,2,0)
+            colors = pano_rgb.permute(1,2,0).clone()#HWC
+            labels, _, _ = self.pano_segment(colors)
+            # labels = labels.permute(1,2,0)
             distances = pano_distance.unsqueeze(-1).clone()
             pano_inpaint_mask = pano_mask.clone()
             print("colors shape:", colors.shape)
@@ -430,13 +433,13 @@ class Pano2RoomPipeline(torch.nn.Module):
 #            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            labels, _, _ = self.pano_segment(colors.cpu().numpy())
+            labels, _, _ = self.pano_segment(colors)
             labels = labels.permute(1,2,0)
             print("color shape:", colors.shape)
             print("labels shape:", labels.shape)
             '''inpainting过程'''
 
-            time.sleep(10)
+            # time.sleep(10)
 
             # apply_GeoCheck:
             perf_pose = pose.clone().type(torch.float)
@@ -508,7 +511,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         inpainted_distances = None
         inpainted_normals = None
 
-        inpainted_img = self.inpainter.inpaint(idx, colors, mask)
+        inpainted_img = self.inpainter.inpaint(idx, colors, mask)#HWCHWC
 
         # Keep renderred part
         inpainted_img = colors * (1 - mask) + inpainted_img * mask# 仅改变掩码部分
@@ -536,7 +539,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         image_path = f"input/input_panorama.png"
         image = Image.open(image_path)
-        if image.size[0] < image.size[1]:
+        if image.size[0] < image.size[1]:# 高度小于宽度则转置图像
             image = image.transpose(Image.TRANSPOSE)
         image = functions.resize_image_with_aspect_ratio(image, new_width=self.pano_width)
         panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).unsqueeze(0).float()/255
@@ -842,12 +845,10 @@ class Pano2RoomPipeline(torch.nn.Module):
         Returns:label_tensor, label_num, evironment_label
         '''
         
-        import Segment
-        
         environment_label = -1
         label_num = len(self.class_names)
         with torch.no_grad():
-            label_tensor = Segment.segment_pano(pano_tensor, self.class_names)
+            label_tensor = Segmentor.segment_pano(pano_tensor)
         
         label_tensor = torch.stack([
             label_tensor,
@@ -869,7 +870,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         pano_rgb, pano_depth = self.load_pano()# initial_panorama_img->panorama_RGBD
         panorama_tensor, init_depth = pano_rgb.squeeze(0).cuda(), pano_depth.cuda()# transform to GPU
         panorama_label, label_num, environment_label= self.pano_segment((np.transpose(panorama_tensor.detach().cpu().numpy(), (1, 2, 0))*255).round().astype(np.uint8))
-        panorama_label = torch.tensor(panorama_label)
+        # panorama_label = torch.tensor(panorama_label) 不必写这一行，panorama_label本来已经是tensor[H,W]了
         
         '''到此产生初始全景图的rgbd_tensor, depth_tensor'''
         print(panorama_tensor.shape, init_depth.shape)
@@ -1018,6 +1019,6 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
 
-
-pipeline = Pano2RoomPipeline()
-pipeline.run()
+if __name__ == "__main__":
+    pipeline = Pano2RoomPipeline()
+    pipeline.run()
