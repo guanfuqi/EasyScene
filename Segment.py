@@ -157,13 +157,13 @@ def equi2pers(pano, pose, fovx, H, W):
 
 def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
     """
-    透视图拼接成全景图
+    透视标签图拼接成全景图
     :param poses: np.ndarray [b,3,4]
     :param H: int
     :param W: int
     :param images: List[Tensor[H,W,3]]
     :param class_num: int
-    :return: np.ndarray [pano_h,pano_w]
+    :return: tensor [pano_h,pano_w]
     """
 
     fov_rad = math.radians(fov)
@@ -178,7 +178,7 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
         [0, 0, 1]
     ], dtype = np.float32)
 
-    out = - np.zeros((pano_h, pano_w), dtype=np.int32)
+    out = - torch.zeros((pano_h, pano_w), dtype=np.int32)
 
     px, py = np.meshgrid(np.arange(pano_w), np.arange(pano_h))
     theta, phi = px / pano_w * 2 * np.pi - np.pi, py / pano_h * np.pi - np.pi / 2
@@ -211,7 +211,6 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
 
         valid_index_pano_2d = np.unravel_index(valid_index, (pano_h,pano_w))
 
-        image = image.detach().cpu().numpy()
         out[valid_index_pano_2d[0], valid_index_pano_2d[1]] = image[pixel_coord[1], pixel_coord[0]]
 
     return out
@@ -238,8 +237,7 @@ def segment(images:List, class_names:List):
     
     return: List[Tensor[h,w,n]]
     '''
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print('当前位置是',device)
+    device = torch.device("cuda")
     results = []
 
     # 加载SAM
@@ -299,7 +297,12 @@ def visualize(image, class_num):
     return Image.fromarray(image.astype(np.uint8), mode = 'L')
 
 def segment_pano(pano, class_names):
-#    pano = pano.numpy()
+    '''
+    :pano: ndarray[H,W,3]
+    :class_names: List[n]
+    :return: tensor[H,W]
+    '''
+
     print('加载相机……')
     poses = functions.get_cubemap_views_world_to_cam()
     poses = [pose[:3].cpu().numpy() for pose in poses]
@@ -320,65 +323,23 @@ def segment_pano(pano, class_names):
             f'output/20250312193327/seg/segpers/{i}.jpg')
 
     print('映射回全景图……')
-    out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1])
+    out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1]) # tensor
 
     print('分割结果可视化……')
     segmented_pano = visualize(out, len(class_names))
     # segmented_pano.show()
-    segmented_pano.save('output/20250312193327/seg_pao.jpg')
+    segmented_pano.save('output/20250312193327/seg_pano.jpg')
 
-    return torch.from_numpy(out)
+    return out
 
 if __name__ == "__main__":
 
-    import time
-    st = time.time()
-    print('加载场景图……')
-
     from SceneGraph import SceneGraph
-    with open('input/text.txt', 'r') as f:
-        text = f.read()
+    scenegraph = SceneGraph(exist = True, exist_path = "output/20250312193327")
+    class_names = scenegraph.extract_objects_names()
+    
+    pano_path = ""
+    pano_pil = Image.open(pano_path)
+    pano:torch.tensor = torch.from_numpy(np.array(pano_pil))#HW3
 
-    scene_graph = SceneGraph(text, exist = True, exist_path = 'output/20250312193327')
-
-    class_names = scene_graph.extract_objects_names()
-
-    print('加载相机……')
-
-    pano = Image.open("output/20250312193327/pano.jpg")
-    pano = np.array(pano)
-    # poses = generate_spherical_cam_poses(0).cpu().numpy()
-    poses = functions.get_cubemap_views_world_to_cam()
-    poses = [pose[:3].numpy() for pose in poses]
-
-    images = []
-
-    fov = 90
-    H,W = 512,512
-
-    print('加载透视图……')
-
-    for i,pose in enumerate(poses):
-        images.append(equi2pers(pano, pose, fov, 512,512))
-        Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
-
-#     print('分割透视图……')
-
-#     segmented_images = segment(images, class_names)
-
-
-#     for i,segmented_image in enumerate(segmented_images):
-#         visualize(segmented_image.detach().cpu().numpy(), len(class_names)).save(f'output/20250312193327/seg/segpers/{i}.jpg')
-
-#     print('映射回全景图……')
-
-#     out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1])
-
-#     print('分割结果可视化……')
-
-#     segmented_pano = visualize(out, len(class_names))
-#     segmented_pano.show()
-#     segmented_pano.save('output/20250312193327/seg_pao.jpg')
-
-#     ed = time.time()
-#     print(f'用时：{ed - st:.2f}秒')
+    out = segment_pano(pano, class_names)
