@@ -165,13 +165,13 @@ def equi2pers(pano, pose, fovx, H, W):
 
 def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
     """
-    透视图拼接成全景图
+    透视标签图拼接成全景图
     :param poses: np.ndarray [b,3,4]
     :param H: int
     :param W: int
     :param images: List[Tensor[H,W,3]]
     :param class_num: int
-    :return: np.ndarray [pano_h,pano_w]
+    :return: tensor [pano_h,pano_w]
     """
 
     fov_rad = math.radians(fov)
@@ -186,7 +186,7 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
         [0, 0, 1]
     ], dtype = np.float32)
 
-    out = - np.zeros((pano_h, pano_w), dtype=np.int32)
+    out = - torch.zeros((pano_h, pano_w), dtype=np.int32)
 
     px, py = np.meshgrid(np.arange(pano_w), np.arange(pano_h))
     theta, phi = px / pano_w * 2 * np.pi - np.pi, py / pano_h * np.pi - np.pi / 2
@@ -219,7 +219,6 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
 
         valid_index_pano_2d = np.unravel_index(valid_index, (pano_h,pano_w))
 
-        image = image.detach().cpu().numpy()
         out[valid_index_pano_2d[0], valid_index_pano_2d[1]] = image[pixel_coord[1], pixel_coord[0]]
 
     return out
@@ -237,56 +236,6 @@ def generate_text_embeddings(classnames, templates, model, device):
         class_embeddings = torch.stack(class_embeddings_list, dim=1).to(device)
     return class_embeddings
 
-
-def segment(images:List, class_names:List):
-    '''
-    像素标注，返回各像素的分类索引矩阵
-    images: RGB image list[ndarray[H,W,3]]
-    class_names: list[n]
-    
-    return: List[Tensor[h,w,n]]
-    '''
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print('当前位置是',device)
-    results = []
-
-    # 加载SAM
-    checkpoint = './checkpoint/sam_vit_h_4b8939.pth'
-    mode_type = 'vit_h'
-    sam = sam_model_registry[mode_type](checkpoint = checkpoint)
-    masks_generator = SamAutomaticMaskGenerator(sam)
-
-    # 加载CLIP
-    clip_model, preprocess = clip.load("ViT-B/32", device=device)
-    text_features = generate_text_embeddings(class_names, ['a clean origami {}.'], clip_model, device)#['a rendering of a weird {}.'], model)
-    text_features /= text_features.norm(dim=-1, keepdim=True)
-    text_features = text_features.squeeze(0)
-
-    for image in tqdm(images):
-        anns = masks_generator.generate(image)
-        result = -1 * torch.ones((image.shape[0],image.shape[1]), dtype = torch.int32)
-        for i, ann in enumerate(anns):
-            mask = ann['segmentation']
-            image_new = image.copy()
-            ind = np.where(mask)
-            image_new[mask == 0] = 0
-            y1, x1, y2, x2 = min(ind[0]), min(ind[1]), max(ind[0]), max(ind[1])
-            image_new = Image.fromarray(image_new[y1:y2+1, x1:x2+1])
-            image_new = preprocess(image_new)
-
-            image_features = clip_model.encode_image(image_new.unsqueeze(0).to(device))
-            # Pick the top 5 most similar labels for the image
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-
-            similarity = (100.0 * image_features.float() @ text_features.float().T).softmax(dim=-1)
-            # values, indices = similarity[0].topk(1)
-            index = torch.argmax(similarity[0], dim = -1)
-            if similarity[0][index] > 0.8:
-                result[ind[0], ind[1]] = int(index)
-
-        results.append(result)
-
-    return results
 
 
 def apply_mask(image, mask):
@@ -306,87 +255,100 @@ def visualize(image, class_num):
     image[:, :] = colors[image[:, :]]
     return Image.fromarray(image.astype(np.uint8), mode = 'L')
 
-def segment_pano(pano, class_names):
-    print('加载相机……')
-    poses = functions.get_cubemap_views_world_to_cam()
-    poses = [pose[:3].cpu().numpy() for pose in poses]
-    fov = 90
-    H, W = 512, 512
+class Segmentor(object):
+    def __init__(self, class_names:list):
+        # 加载SAM
+        checkpoint = './checkpoint/sam_vit_h_4b8939.pth'
+        mode_type = 'vit_h'
+        sam = sam_model_registry[mode_type](checkpoint = checkpoint)
+        self.masks_generator = SamAutomaticMaskGenerator(sam)
 
-    images = []
-    print('加载透视图……')
-    for i, pose in enumerate(poses):
-        images.append(equi2pers(pano, pose, fov, 512, 512))
-        Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
+        # 加载CLIP
+        clip_model, preprocess = clip.load("ViT-B/32", device=device)
+        text_features = generate_text_embeddings(class_names, ['a clean origami {}.'], clip_model, device)#['a rendering of a weird {}.'], model)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+        self.text_features = text_features.squeeze(0)
+    
+    def segment(self, images:List):
+        '''
+        像素标注，返回各像素的分类索引矩阵
+        parameters:
+        - images: RGB image list[ndarray[H,W,3]]
+        
+        return: 
+        -results: List[Tensor[h,w,n]]
+        '''
+        device = torch.device("cuda")
+        results = []
 
-    print('分割透视图……')
-    segmented_images = segment(images, class_names)
+        for image in tqdm(images):
+            anns = self.masks_generator.generate(image)
+            result = -1 * torch.ones((image.shape[0],image.shape[1]), dtype = torch.int32)
+            for i, ann in enumerate(anns):
+                mask = ann['segmentation']
+                image_new = image.copy()
+                ind = np.where(mask)
+                image_new[mask == 0] = 0
+                y1, x1, y2, x2 = min(ind[0]), min(ind[1]), max(ind[0]), max(ind[1])
+                image_new = Image.fromarray(image_new[y1:y2+1, x1:x2+1])
+                image_new = preprocess(image_new)
 
-    for i, segmented_image in enumerate(segmented_images):
-        visualize(segmented_image.detach().cpu().numpy(), len(class_names)).save(
-            f'output/20250312193327/seg/seg_pers/{i}.jpg')
+                image_features = clip_model.encode_image(image_new.unsqueeze(0).to(device))
+                # Pick the top 5 most similar labels for the image
+                image_features /= image_features.norm(dim=-1, keepdim=True)
 
-    print('映射回全景图……')
-    out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1])
+                similarity = (100.0 * image_features.float() @ self.text_features.float().T).softmax(dim=-1)
+                # values, indices = similarity[0].topk(1)
+                index = torch.argmax(similarity[0], dim = -1)
+                if similarity[0][index] > 0.8:
+                    result[ind[0], ind[1]] = int(index)
 
-    print('分割结果可视化……')
-    segmented_pano = visualize(out, len(class_names))
-    # segmented_pano.show()
-    segmented_pano.save('output/20250312193327/seg_pano.jpg')
+            results.append(result)
+        return results
 
-    return torch.from_numpy(out)
+    def segment_pano(self, pano):
+        '''
+        :pano: ndarray[H,W,3]
+        :class_names: List[n]
+        :return: tensor[H,W]
+        '''
+
+        print('加载相机……')
+        poses = functions.get_cubemap_views_world_to_cam()
+        poses = [pose[:3].cpu().numpy() for pose in poses]
+        fov = 90
+        H, W = 512, 512
+
+        images = []
+        print('加载透视图……')
+        for i, pose in enumerate(poses):
+            images.append(equi2pers(pano, pose, fov, 512, 512))
+            Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
+
+        print('分割透视图……')
+        segmented_images = self.segment(images)
+
+        for i, segmented_image in enumerate(segmented_images):
+            visualize(segmented_image.detach().cpu().numpy(), len(class_names)).save(
+                f'output/20250312193327/seg/segpers/{i}.jpg')
+
+        print('映射回全景图……')
+        out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1]) # tensor
+
+        print('分割结果可视化……')
+        segmented_pano = visualize(out, len(class_names))
+        # segmented_pano.show()
+        segmented_pano.save('output/20250312193327/seg_pano.jpg')
+
+        return out
+
 
 if __name__ == "__main__":
 
-    import time
-    st = time.time()
-    print('加载场景图……')
-
     from SceneGraph import SceneGraph
-    with open('input/text.txt', 'r') as f:
-        text = f.read()
-
-    scene_graph = SceneGraph(text, exist = True, exist_path = 'output/20250312193327')
-
-    class_names = scene_graph.extract_objects_names()
-
-    print('加载相机……')
-
-#    pano = Image.open("output/20250312193327/pano.jpg")
-    pano = Image.open("input/input_panorama.png")
-    pano = np.array(pano)
-    # poses = generate_spherical_cam_poses(0).cpu().numpy()
-    poses = functions.get_cubemap_views_world_to_cam()
-    poses = [pose[:3].numpy() for pose in poses]
-
-    images = []
-
-    fov = 90
-    H,W = 512,512
-
-    print('加载透视图……')
-
-    for i,pose in enumerate(poses):
-        images.append(equi2pers(pano, pose, fov, 512,512))
-        Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
-
-#     print('分割透视图……')
-
-#     segmented_images = segment(images, class_names)
-
-
-#     for i,segmented_image in enumerate(segmented_images):
-#         visualize(segmented_image.detach().cpu().numpy(), len(class_names)).save(f'output/20250312193327/seg/segpers/{i}.jpg')
-
-#     print('映射回全景图……')
-
-#     out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1])
-
-#     print('分割结果可视化……')
-
-#     segmented_pano = visualize(out, len(class_names))
-#     segmented_pano.show()
-#     segmented_pano.save('output/20250312193327/seg_pao.jpg')
-
-#     ed = time.time()
-#     print(f'用时：{ed - st:.2f}秒')
+    scenegraph = SceneGraph(exist = True, exist_path = "output/20250312193327")
+    class_names = scenegraph.extract_objects_names()
+    
+    pano_path = ""
+    pano_pil = Image.open(pano_path)
+    pano:torch.tensor = torch.from_numpy(np.array(pano_pil))#HW3
