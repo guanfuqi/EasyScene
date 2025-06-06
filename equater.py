@@ -37,6 +37,7 @@ from utils.loss import l1_loss, ssim
 from random import randint
 
 from SceneGraph import SceneGraph
+from Segment import Segmentor
 
 '''
 STRUCTURE
@@ -172,6 +173,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.class_names = self.scene_graph.extract_objects_names()
 
         self.scene_depth_max = 4.0228885328450446
+        self.segmentor = Segmentor(self.class_names)
 
 
     def load_modules(self):
@@ -418,8 +420,9 @@ class Pano2RoomPipeline(torch.nn.Module):
 
             # inpaint pano
             colors = pano_rgb.permute(1,2,0).clone()
-            labels, _, _ = self.pano_segment(colors.cpu().numpy())
-            labels = labels.permute(1,2,0)
+            # labels, _, _ = self.pano_segment(colors)
+            # labels = labels.permute(1,2,0)
+            # 这两行没用
             distances = pano_distance.unsqueeze(-1).clone()
             pano_inpaint_mask = pano_mask.clone()
             '''
@@ -434,7 +437,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
             labels, _, _ = self.pano_segment(colors.cpu().numpy())
-            labels = labels.permute(1,2,0)
+            # labels = labels.permute(1,2,0) 这一行有问题，label本来就是H*W*C的形状的，不用再改了
             '''inpainting过程'''
 
             # apply_GeoCheck:
@@ -830,7 +833,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         environment_label = -1
         label_num = len(self.class_names)
         with torch.no_grad():
-            label_tensor = Segment.segment_pano(pano_tensor, self.class_names)
+            label_tensor = self.segmentor.segment_pano(pano_tensor, self.class_names)
         
         label_tensor = torch.stack([
             label_tensor,
@@ -850,10 +853,10 @@ class Pano2RoomPipeline(torch.nn.Module):
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
         # Load Initial RGB, Depth, Label Tensor
-        panorama_rgb, panorama_depth = self.load_pano()
-        panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda()
-        panorama_label, label_num, environment_label = self.pano_segment((np.transpose(panorama_rgb.detach().cpu().numpy(), (1, 2, 0))*255).round().astype(np.uint8))
-        panorama_label = torch.tensor(panorama_label)
+        panorama_rgb, panorama_depth = self.load_pano() # 建议检查一下panorama_rgb是不是H*W的
+        panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # CHW, HW
+        panorama_label, label_num, environment_label = self.pano_segment((panorama_rgb * 255).asytpe(torch.uint8).permute(1,2,0))
+        # panorama_label = torch.tensor(panorama_label) 不用写这一行，因为label本来就是tensor
 
         # Load Initial Depth_Edge, Depth_Edge_Inpainted_Mask
         depth_edge = self.find_depth_edge(panorama_depth.cpu().detach().numpy(), dilate_iter=1)
