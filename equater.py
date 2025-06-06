@@ -839,7 +839,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             label_tensor,
             torch.zeros_like(label_tensor),
             torch.zeros_like(label_tensor)
-            ], dim=0)
+            ], dim=-1)
         
         return label_tensor, label_num, environment_label
         '''label_tensor: 形状(N, 3) 其中第一通道为分割标签（非负整数）
@@ -856,7 +856,6 @@ class Pano2RoomPipeline(torch.nn.Module):
         panorama_rgb, panorama_depth = self.load_pano() # 建议检查一下panorama_rgb是不是H*W的
         panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # CHW, HW
         panorama_label, label_num, environment_label = self.pano_segment((panorama_rgb * 255).asytpe(torch.uint8).permute(1,2,0))
-        # panorama_label = torch.tensor(panorama_label) 不用写这一行，因为label本来就是tensor
 
         # Load Initial Depth_Edge, Depth_Edge_Inpainted_Mask
         depth_edge = self.find_depth_edge(panorama_depth.cpu().detach().numpy(), dilate_iter=1)
@@ -884,24 +883,33 @@ class Pano2RoomPipeline(torch.nn.Module):
         for label in range(label_num):
             if label == environment_label:
                 continue
-            object_tensor = self.find_object(label)
+            object_tensor = self.find_object(label) # 3 * N
             object_stats[label] = len(object_tensor[1])
             object_centers[label] = object_tensor.mean(dim=1, dtype=torch.float64)
-        object_stats = sorted(object_stats.items(), key=lambda item:item[1], reverse=True)
+        object_stats = sorted(object_stats.items(), key=lambda item:item[1], reverse=True) # list ?
         
         # Load Inpainting Camera Position
         camera_positions = []
         sample_scale = 2
         delta_theta = np.pi * 2 / sample_scale
         depth_factor = 0.7
-        for i in range(sample_scale):
-            theta = delta_theta * i
-            d = panorama_depth[int(self.H / 2), int((theta + np.pi / 2) / np.pi / 2 * self.W)].cpu().item()
-            x = np.cos(theta) * d * depth_factor
-            y = 0
-            z = np.sin(theta) * d * depth_factor
-            position = np.array([x, y, z])
-            camera_positions.append(position)
+        equater = panorama_depth[int(panorama_depth.shape[0]/2)]
+        # euqater = equater * depth_factor
+        equater = equater[np.array(0, panorama_depth.shape[1], delta_theta)] 
+        theta = np.array(-np.pi, np.pi, delta_theta)
+        xs = np.sin(theta) * equater * depth_factor
+        zs = np.cos(theta) * equater * depth_factor
+        ys = np.zeros_like(theta)
+        camera_positions = [np.array(x,y,z) for x, y, z in zip(xs, ys, zs)]
+
+        # for i in range(sample_scale):
+        #     theta = delta_theta * i
+        #     d = panorama_depth[int(self.H / 2), int((theta + np.pi / 2) / np.pi / 2 * self.W)].cpu().item() # 变成python内置float类型
+        #     x = np.cos(theta) * d * depth_factor
+        #     y = 0
+        #     z = np.sin(theta) * d * depth_factor
+        #     position = np.array([x, y, z])
+        #     camera_positions.append(position)
 
         # Load Inpaintin Camera Pose & Mesh Inpainting
         pose_idx = 0
