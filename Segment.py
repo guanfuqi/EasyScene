@@ -82,11 +82,11 @@ def equi2pers(pano, pose, fovx, H, W):
     # 生成透视图的像素坐标网格
     x, y = np.meshgrid(np.arange(W), np.arange(H))
     pixel_coords = np.stack([x, y, np.ones_like(x)], axis=-1)  # 形状为 (H, W, 3)
-    print("==========pixel_coords shape:", pixel_coords.shape, "==========")
+ #   print("==========pixel_coords shape:", pixel_coords.shape, "==========")
 
     # 将像素坐标转换为归一化设备坐标（normalized device coordinates）
     normalized_coords = np.linalg.inv(K) @ pixel_coords.reshape(-1, 3).T  # 形状为 (3, H*W)
-    print("==========normalized_coords:", normalized_coords.shape, "==========")
+#    print("==========normalized_coords:", normalized_coords.shape, "==========")
 
     # 将归一化设备坐标转换为世界坐标
     world_coords = R.T @ (normalized_coords - T)
@@ -99,8 +99,10 @@ def equi2pers(pano, pose, fovx, H, W):
     # 将球面坐标转换为全景图的像素坐标
     pano_x = (theta / (2 * np.pi) + 0.5) * pano.shape[1]  # 经度映射到全景图的宽度
     pano_y = (phi / np.pi + 0.5) * pano.shape[0]  # 纬度映射到全景图的高度
+    '''
     print("==========pano_x:", pano_x.shape, "==========")
     print("==========pano_y:", pano_y.shape, "==========")
+    '''
 
     # 使用双线性插值获取全景图中的像素值
     pano_x = np.clip(pano_x, 0, pano.shape[1] - 1)
@@ -109,12 +111,14 @@ def equi2pers(pano, pose, fovx, H, W):
     pano_x_ceil = np.ceil(pano_x).astype(np.int32)
     pano_y_floor = np.floor(pano_y).astype(np.int32)
     pano_y_ceil = np.ceil(pano_y).astype(np.int32)
+    '''
     print("==========pano_x:", pano_x.shape, "==========")
     print("==========pano_y:", pano_y.shape, "==========")
     print("==========pano_x_floor:", pano_x_floor.shape, "==========")
     print("==========pano_x_ceil:", pano_x_ceil.shape, "==========")
     print("==========pano_y_floor:", pano_y_floor.shape, "==========")
     print("==========pano_y_ceil:", pano_y_ceil.shape, "==========")
+    '''
 
     # 双线性插值
     dx = pano_x - pano_x_floor
@@ -123,22 +127,26 @@ def equi2pers(pano, pose, fovx, H, W):
     pano_x_ceil = np.clip(pano_x_ceil, 0, pano.shape[1] - 1)
     pano_y_floor = np.clip(pano_y_floor, 0, pano.shape[0] - 1)
     pano_y_ceil = np.clip(pano_y_ceil, 0, pano.shape[0] - 1)
+    '''
     print("==========dx:", dx.shape, "==========")
     print("==========dy:", dy.shape, "==========")
     print("==========pano_x_floor:", pano_x_floor.shape, "==========")
     print("==========pano_x_ceil:", pano_x_ceil.shape, "==========")
     print("==========pano_y_floor:", pano_y_floor.shape, "==========")
     print("==========pano_y_ceil:", pano_y_ceil.shape, "==========")
+    '''
 
     # 获取四个邻近像素的值
     q11 = pano[pano_y_floor, pano_x_floor]
     q12 = pano[pano_y_ceil, pano_x_floor]
     q21 = pano[pano_y_floor, pano_x_ceil]
     q22 = pano[pano_y_ceil, pano_x_ceil]
+    '''
     print("==========q11:", q11.shape, "==========")
     print("==========q12:", q12.shape, "==========")
     print("==========q21:", q21.shape, "==========")
     print("==========q22:", q22.shape, "==========")
+    '''
 
     # 双线性插值计算
     b = dy[..., None]
@@ -147,7 +155,7 @@ def equi2pers(pano, pose, fovx, H, W):
     assert (a.shape == (H*W,1))
 
     pers_img = (1 - a) * (1 - b) * q11 + a * (1 - b) * q21 + (1 - a) * b * q12 + a * b * q22
-    print("==========pers_img:", pers_img.shape, "==========")
+ #   print("==========pers_img:", pers_img.shape, "==========")
     
     # 将结果重塑为透视图的形状
     pers_img = pers_img.reshape(H, W, 3).astype(np.uint8)
@@ -299,7 +307,6 @@ def visualize(image, class_num):
     return Image.fromarray(image.astype(np.uint8), mode = 'L')
 
 def segment_pano(pano, class_names):
-#    pano = pano.numpy()
     print('加载相机……')
     poses = functions.get_cubemap_views_world_to_cam()
     poses = [pose[:3].cpu().numpy() for pose in poses]
@@ -317,7 +324,7 @@ def segment_pano(pano, class_names):
 
     for i, segmented_image in enumerate(segmented_images):
         visualize(segmented_image.detach().cpu().numpy(), len(class_names)).save(
-            f'output/20250312193327/seg/segpers/{i}.jpg')
+            f'output/20250312193327/seg/seg_pers/{i}.jpg')
 
     print('映射回全景图……')
     out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1])
@@ -325,7 +332,7 @@ def segment_pano(pano, class_names):
     print('分割结果可视化……')
     segmented_pano = visualize(out, len(class_names))
     # segmented_pano.show()
-    segmented_pano.save('output/20250312193327/seg_pao.jpg')
+    segmented_pano.save('output/20250312193327/seg_pano.jpg')
 
     return torch.from_numpy(out)
 
@@ -345,7 +352,8 @@ if __name__ == "__main__":
 
     print('加载相机……')
 
-    pano = Image.open("output/20250312193327/pano.jpg")
+#    pano = Image.open("output/20250312193327/pano.jpg")
+    pano = Image.open("input/input_panorama.png")
     pano = np.array(pano)
     # poses = generate_spherical_cam_poses(0).cpu().numpy()
     poses = functions.get_cubemap_views_world_to_cam()
