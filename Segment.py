@@ -17,11 +17,11 @@ import torch
 from clip_text import class_names_coco, class_names_ADE_150
 from PIL import Image 
 import torch.nn.functional as F
-from utils.camera_utils import img_to_pano_coord, pano_to_img_coord
+# from utils.camera_utils import img_to_pano_coord, pano_to_img_coord
 from utils.camera_utils import look_at
 from trimesh.creation import icosphere
 import math
-from utils import functions
+from utils.functions import get_cubemap_views_world_to_cam
 
 def generate_spherical_cam_poses(subdivisions = 2) -> torch.Tensor:
     """
@@ -256,7 +256,11 @@ def visualize(image, class_num):
     return Image.fromarray(image.astype(np.uint8), mode = 'L')
 
 class Segmentor(object):
-    def __init__(self, class_names:list):
+    def __init__(self, H, W, fovx, class_names:list):
+        self.H = H
+        self.W = W
+        self.fovx = fovx
+
         # 加载SAM
         checkpoint = './checkpoint/sam_vit_h_4b8939.pth'
         mode_type = 'vit_h'
@@ -264,8 +268,8 @@ class Segmentor(object):
         self.masks_generator = SamAutomaticMaskGenerator(sam)
 
         # 加载CLIP
-        clip_model, preprocess = clip.load("ViT-B/32", device=device)
-        text_features = generate_text_embeddings(class_names, ['a clean origami {}.'], clip_model, device)#['a rendering of a weird {}.'], model)
+        self.clip_model, self.preprocess = clip.load("ViT-B/32", device=device)
+        text_features = generate_text_embeddings(class_names, ['a clean origami {}.'], self.clip_model, device)#['a rendering of a weird {}.'], model)
         text_features /= text_features.norm(dim=-1, keepdim=True)
         self.text_features = text_features.squeeze(0)
     
@@ -291,9 +295,9 @@ class Segmentor(object):
                 image_new[mask == 0] = 0
                 y1, x1, y2, x2 = min(ind[0]), min(ind[1]), max(ind[0]), max(ind[1])
                 image_new = Image.fromarray(image_new[y1:y2+1, x1:x2+1])
-                image_new = preprocess(image_new)
+                image_new = self.preprocess(image_new)
 
-                image_features = clip_model.encode_image(image_new.unsqueeze(0).to(device))
+                image_features = self.clip_model.encode_image(image_new.unsqueeze(0).to(device))
                 # Pick the top 5 most similar labels for the image
                 image_features /= image_features.norm(dim=-1, keepdim=True)
 
@@ -308,18 +312,20 @@ class Segmentor(object):
 
     def segment_pano(self, pano):
         '''
-        :pano: ndarray[H,W,3]
+        :pano: tensor[3,H,W]
         :class_names: List[n]
         :return: tensor[H,W]
         '''
 
         print('加载相机……')
-        poses = functions.get_cubemap_views_world_to_cam()
+        poses = get_cubemap_views_world_to_cam()
         poses = [pose[:3].cpu().numpy() for pose in poses]
-        fov = 90
-        H, W = 512, 512
+        fov = self.fovx
+        H, W = self.H, self.W
 
         images = []
+        pano = (pano.permute(1, 2, 0).detach().cpu().numpy()[..., :3] * 255).astype(np.uint8)
+
         print('加载透视图……')
         for i, pose in enumerate(poses):
             images.append(equi2pers(pano, pose, fov, 512, 512))
@@ -351,4 +357,4 @@ if __name__ == "__main__":
     
     pano_path = ""
     pano_pil = Image.open(pano_path)
-    pano:torch.tensor = torch.from_numpy(np.array(pano_pil))#HW3
+    pano:torch.tensor = torch.from_numpy(np.array(pano_pil)).permute(2, 1, 0).float()/255 #3HW

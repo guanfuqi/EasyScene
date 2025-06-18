@@ -173,7 +173,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.class_names = self.scene_graph.extract_objects_names()
 
         self.scene_depth_max = 4.0228885328450446
-        self.segmentor = Segmentor(self.class_names)
+        self.segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
 
 
     def load_modules(self):
@@ -436,7 +436,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 #            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            labels, _, _ = self.pano_segment(colors.cpu().numpy())
+            labels, _, _ = self.pano_segment(colors)
             # labels = labels.permute(1,2,0) 这一行有问题，label本来就是H*W*C的形状的，不用再改了
             '''inpainting过程'''
 
