@@ -439,7 +439,8 @@ class Pano2RoomPipeline(torch.nn.Module):
 #            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            # labels, _, _ = self.pano_segment(colors)
+            lables, _, _ = self.pano_segment(colors)
+            colors = torch.cat([colors, lables], dim = 0)
             '''inpainting过程'''
 
             # apply_GeoCheck:
@@ -455,7 +456,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             # add new mesh
             self.pano_distance_to_mesh(colors.permute(2,0,1), distances.squeeze(1), pano_inpaint_mask, pose=pose)# CHW, HW, HW
             # self.pano_distance_to_mesh(colors.permute(2,0,1), distances.squeeze(2), pano_inpaint_mask, pose=pose)# CHW, HW, HW
-            self.pano_distance_to_mesh(labels.permute(2,0,1), distances.squeeze(1), pano_inpaint_mask, pose=pose, pseudo=True)# CHW, HW, HW
+            # self.pano_distance_to_mesh(labels.permute(2,0,1), distances.squeeze(1), pano_inpaint_mask, pose=pose, pseudo=True)# CHW, HW, HW
             # self.pano_distance_to_mesh(labels.permute(2,0,1), distances.squeeze(2), pano_inpaint_mask, pose=pose, pseudo=True)# CHW, HW, HW
 
             # apply_GeoCheck:
@@ -723,7 +724,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         for i in range(len(viewpoint_stack)):
             viewpoint_cam, mesh_pose = viewpoint_stack[i]
 
-            results = render(viewpoint_cam, self.gaussians, self.opt, self.background)
+            results = render(viewpoint_cam, self.gaussians, self.opt, self.background) # 用这个方法来得到3DGS的渲染结果
             frame, depth = results['render'], results['depth'].detach().cpu()
 
             framelist.append(
@@ -870,7 +871,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.sup_pool.gen_occ_grid(256)
 
         # Pano2Mesh
-        self.pano_distance_to_mesh(panorama_rgb, panorama_depth, depth_edge_inpaint_mask)
+        panorama_rgbl = torch.cat([panorama_rgb, panorama_label], dim = 0)
+        self.pano_distance_to_mesh(panorama_rgbl, panorama_depth, depth_edge_inpaint_mask)
         # self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo=True)
 
         # Analyse Objects
@@ -914,7 +916,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         for camera_position in camera_positions:
             pose_idx = pose_idx + 1
             print(pose_idx)
-            time.sleep(10)
+            
             pose_to_origin = {'0': self.lookat(np.array([0, 0, 0]), camera_position)}
             inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_to_origin))
             self.poses.extend(list(pose_to_origin.values()))
