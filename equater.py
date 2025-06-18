@@ -38,6 +38,7 @@ from random import randint
 
 from SceneGraph import SceneGraph
 from Segment import Segmentor
+from modules.pose_sampler.circle_pose_sampler import CirclePoseSampler
 
 '''
 STRUCTURE
@@ -174,6 +175,11 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         self.scene_depth_max = 4.0228885328450446
         self.segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
+
+        self.pose_sampler = {
+            'traverse_ratios': [0.2, 0.4, 0.6],
+            'n_anchors_per_ratio': [8, 8, 8]
+        }
 
 
     def load_modules(self):
@@ -420,9 +426,6 @@ class Pano2RoomPipeline(torch.nn.Module):
 
             # inpaint pano
             colors = pano_rgb.permute(1,2,0).clone()
-            # labels, _, _ = self.pano_segment(colors)
-            # labels = labels.permute(1,2,0)
-            # 这两行没用
             distances = pano_distance.unsqueeze(-1).clone()
             pano_inpaint_mask = pano_mask.clone()
             '''
@@ -436,8 +439,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 #            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            labels, _, _ = self.pano_segment(colors)
-            # labels = labels.permute(1,2,0) 这一行有问题，label本来就是H*W*C的形状的，不用再改了
+            # labels, _, _ = self.pano_segment(colors)
             '''inpainting过程'''
 
             # apply_GeoCheck:
@@ -883,18 +885,18 @@ class Pano2RoomPipeline(torch.nn.Module):
         object_stats = sorted(object_stats.items(), key=lambda item:item[1], reverse=True) # list ?
         
         # Load Inpainting Camera Position
-        camera_positions = []
-        sample_scale = 2
-        delta_theta = np.pi * 2 / sample_scale
-        depth_factor = 0.7
-        equater = panorama_depth[int(panorama_depth.shape[0]/2)]
-        # euqater = equater * depth_factor
-        equater = equater[np.array(0, panorama_depth.shape[1], delta_theta)] 
-        theta = np.array(-np.pi, np.pi, delta_theta)
-        xs = np.sin(theta) * equater * depth_factor
-        zs = np.cos(theta) * equater * depth_factor
-        ys = np.zeros_like(theta)
-        camera_positions = [np.array(x,y,z) for x, y, z in zip(xs, ys, zs)]
+        camera_positions = CirclePoseSampler(panorama_depth, **self.pose_sampler) # N3
+        # sample_scale = 2
+        # delta_theta = np.pi * 2 / sample_scale
+        # depth_factor = 0.7
+        # equater = panorama_depth[int(panorama_depth.shape[0]/2)]
+        # # euqater = equater * depth_factor
+        # equater = equater[np.array(0, panorama_depth.shape[1], delta_theta)] 
+        # theta = np.array(-np.pi, np.pi, delta_theta)
+        # xs = np.sin(theta) * equater * depth_factor
+        # zs = np.cos(theta) * equater * depth_factor
+        # ys = np.zeros_like(theta)
+        # camera_positions = [np.array(x,y,z) for x, y, z in zip(xs, ys, zs)]
 
         # for i in range(sample_scale):
         #     theta = delta_theta * i
