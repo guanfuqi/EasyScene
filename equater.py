@@ -138,7 +138,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.rendered_depth = torch.zeros((self.H, self.W), device=self.device) 
         self.inpaint_mask = torch.ones((self.H, self.W), device=self.device, dtype=torch.bool)  
         self.vertices = torch.empty((3, 0), device=self.device, requires_grad=False)# gaussian_train_data
-        self.colors = torch.empty((3, 0), device=self.device, requires_grad=False)# gaussian_train_data
+        self.colors = torch.empty((4, 0), device=self.device, requires_grad=False)# 前3行表示颜色，第四行表示标签
         self.labels = torch.empty((3, 0), device=self.device, requires_grad=False)#pseudo_rgb
         self.faces = torch.empty((3, 0), device=self.device, dtype=torch.long, requires_grad=False)# gaussian_train_data
         self.pix_to_face = None
@@ -194,7 +194,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         rendered_image_tensor, self.rendered_depth, self.inpaint_mask, self.pix_to_face, self.z_buf, self.mesh = render_mesh(
             vertices=self.vertices,
             faces=self.faces,
-            vertex_features=self.colors,
+            vertex_features=self.colors[:3],# 只用前三个，因为前三个表示颜色，第四个表示标签
             H=self.H,
             W=self.W,
             fov_in_degrees=self.fov,
@@ -250,7 +250,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
 
-    def rgbd_to_mesh(self, rgb, depth, world_to_cam=None, mask=None, pix_to_face=None, using_distance_map=False, pseudo=False):
+    def rgbd_to_mesh(self, rgbl, depth, world_to_cam=None, mask=None, pix_to_face=None, using_distance_map=False, pseudo=False):
         '''
         RGBD_to_mesh
         using features_to_world_space_mesh()
@@ -259,7 +259,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         '''
         
         predicted_depth = depth.cuda()
-        rgb = rgb.squeeze(0).cuda()
+        rgbl = rgbl.squeeze(0).cuda()
 
         if world_to_cam is None:
             world_to_cam = torch.eye(4, dtype=torch.float32)
@@ -277,8 +277,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         if self.inpaint_mask.sum() == 0:
             return
 
-        vertices, faces, colors_or_labels = features_to_world_space_mesh(
-                colors=rgb,
+        vertices, faces, colors = features_to_world_space_mesh(
+                colors=rgbl,
                 depth=predicted_depth,
                 fov_in_degrees=self.fov,
                 world_to_cam=world_to_cam,
@@ -291,27 +291,27 @@ class Pano2RoomPipeline(torch.nn.Module):
         )
         '''完成新mesh的生成'''
 
-        if not pseudo:
+        # if not pseudo:
 
-            faces += self.vertices.shape[1]# 面索引偏移 避免与现有顶点冲突
+        faces += self.vertices.shape[1]# 面索引偏移 避免与现有顶点冲突
 
-            self.vertices_restore = self.vertices.clone()
-            self.colors_restore = self.colors.clone()
-            self.faces_restore = self.faces.clone()
-            '''保存 方便回退'''
+        self.vertices_restore = self.vertices.clone()
+        self.colors_restore = self.colors.clone()
+        self.faces_restore = self.faces.clone()
+        '''保存 方便回退'''
 
-            self.vertices = torch.cat([self.vertices, vertices], dim=1)
-            self.colors = torch.cat([self.colors, colors_or_labels], dim=1)
-            self.faces = torch.cat([self.faces, faces], dim=1)
-            '''合并mesh'''
+        self.vertices = torch.cat([self.vertices, vertices], dim=1)
+        self.colors = torch.cat([self.colors, colors], dim=1)
+        self.faces = torch.cat([self.faces, faces], dim=1)
+        '''合并mesh'''
 
-        else:
+        # else:
 
-            self.labels_restore = self.labels.clone()
-            '''保存 方便回退'''
+        #     self.labels_restore = self.labels.clone()
+        #     '''保存 方便回退'''
 
-            self.labels = torch.cat([self.labels, colors_or_labels], dim=1)
-            '''合并mesh'''
+        #     self.labels = torch.cat([self.labels, colors_or_labels], dim=1)
+        #     '''合并mesh'''
 
 
 
@@ -331,14 +331,14 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
 
-    def pano_distance_to_mesh(self, pano_rgb, pano_distance, depth_edge_inpaint_mask, pose=None, pseudo=False):
+    def pano_distance_to_mesh(self, pano_rgbl, pano_distance, depth_edge_inpaint_mask, pose=None, pseudo=False):
         '''
         panoramaRGBD_to_mesh
         using rgbd_to_mesh
         INPUT:panoramaRGBD OUTPUT:None
         mesh iteration
         '''
-        self.rgbd_to_mesh(pano_rgb, pano_distance, mask=depth_edge_inpaint_mask, using_distance_map=True, world_to_cam=pose, pseudo=pseudo)
+        self.rgbd_to_mesh(pano_rgbl, pano_distance, mask=depth_edge_inpaint_mask, using_distance_map=True, world_to_cam=pose, pseudo=pseudo)
  
 
 
@@ -822,29 +822,23 @@ class Pano2RoomPipeline(torch.nn.Module):
     def pano_segment(self, pano_tensor):
         '''
         Args:
-            pano_tensor: NDArray[H,W,3]
-            class_names: List[N]
+        - pano_tensor: tensor[3,H,W]
+        - class_names: List[N]
 
-        Returns:label_tensor, label_num, evironment_label
+        Returns:
+        - label_tensor: tensor[H,W](float)
+        - label_num
+        - evironment_label
         '''
         
-        import Segment
+        # import Segment
         
         environment_label = -1
         label_num = len(self.class_names)
         with torch.no_grad():
-            label_tensor = self.segmentor.segment_pano(pano_tensor, self.class_names)
-        
-        label_tensor = torch.stack([
-            label_tensor,
-            torch.zeros_like(label_tensor),
-            torch.zeros_like(label_tensor)
-            ], dim=-1)
-        
+            label_tensor = self.segmentor.segment_pano(pano_tensor, self.class_names).to(torch.float)
+
         return label_tensor, label_num, environment_label
-        '''label_tensor: 形状(N, 3) 其中第一通道为分割标签（非负整数）
-        label_num 总标签数
-        environment_label 环境所对应的标签'''
 
 
 
@@ -855,7 +849,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         # Load Initial RGB, Depth, Label Tensor
         panorama_rgb, panorama_depth = self.load_pano() # 建议检查一下panorama_rgb是不是H*W的
         panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # CHW, HW
-        panorama_label, label_num, environment_label = self.pano_segment((panorama_rgb * 255).asytpe(torch.uint8).permute(1,2,0))
+        panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb)
 
         # Load Initial Depth_Edge, Depth_Edge_Inpainted_Mask
         depth_edge = self.find_depth_edge(panorama_depth.cpu().detach().numpy(), dilate_iter=1)
@@ -875,7 +869,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         # Pano2Mesh
         self.pano_distance_to_mesh(panorama_rgb, panorama_depth, depth_edge_inpaint_mask)
-        self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo=True)
+        # self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo=True)
 
         # Analyse Objects
         object_stats = {}
@@ -942,7 +936,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             'W': self.W,
             'H': self.H,
             'pcd_points': self.vertices.detach().cpu(),#初始为空的顶点张量列表 形状3*0
-            'pcd_colors': self.colors.permute(1,0).detach().cpu(),#初始为空的顶点颜色列表 形状3*0
+            'pcd_colors': self.colors[:3].permute(1,0).detach().cpu(),#初始为空的顶点颜色列表 形状3*0
             'frames': [],#初始为空的frame_list 用于存放训练用视图
         }
         for inpainted_pano_images, pano_pose_44 in inpainted_panos_and_poses:
