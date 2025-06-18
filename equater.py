@@ -439,8 +439,8 @@ class Pano2RoomPipeline(torch.nn.Module):
 #            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            lables, _, _ = self.pano_segment(colors)
-            colors = torch.cat([colors, lables], dim = 0)
+            labels, _, _ = self.pano_segment(colors)
+            colors = torch.cat([colors, labels], dim = 0)
             '''inpainting过程'''
 
             # apply_GeoCheck:
@@ -789,36 +789,72 @@ class Pano2RoomPipeline(torch.nn.Module):
         print("obj shape:", obj.shape)
         print("main_cam shape:", main_cam.shape)
         '''
+        
+        
         obj_radius = np.linalg.norm(obj - main_cam)
-        cam_radius_diff = 10
-        pose_select_num = 1
-        circle_num = 1
+        pose_select_num = 3
+        circle_num = 2
+        cam_radius_diff = obj_radius / circle_num
         '''这里的三个参数应该都与size有关 这里暂时处理成定值'''
 
         object_poses_dict = {}
         key = 0
 
         for i in range(circle_num):
+
             cam_radius = cam_radius_diff * (i + 1)
 
             r1 = obj_radius
             r2 = cam_radius
-            d = r1
-            center = (d**2 + r2**2 - r1**2) / (2*d**2) * obj + (d**2 + r1**2 - r2**2) / (2*d**2) * main_cam
-            rho = (abs((d + r1 + r2) * (-d + r1 + r2) * (d - r1 + r2) * (d + r1 - r2)))**(1/2) / (2*d)
+            center = (r2**2) / (2 * r1**2) * obj + (1 - (r2**2) / (2 * r1**2)) * main_cam
+            rho = r2 / (2 * r1) * np.sqrt(4 * r1**2 - r2**2)
             z = (obj - main_cam)/r1
-            up = np.array([0, 1, 0])
-            x = np.cross(up, z)
-            y = np.cross(z, x)
+            up = np.array([0, 1, 1])
+            x = np.cross(up, z) / np.linalg.norm(np.cross(up, z))
+            y = np.cross(z, x) / np.linalg.norm(np.cross(z, x))
+
+            theta0 = 2 * np.pi / pose_select_num / circle_num * i
             
             for j in range(pose_select_num):
 
-                theta = j / pose_select_num * 2 * np.pi
+                theta = j / pose_select_num * 2 * np.pi + theta0
                 cam = center + rho * np.cos(theta) * x + rho * np.sin(theta) * y
                 object_poses_dict[key] = self.lookat(obj, cam)
                 key += 1
 
         return object_poses_dict
+
+        
+        # obj_radius = np.linalg.norm(obj - main_cam)
+        # cam_radius_diff = 10
+        # pose_select_num = 1
+        # circle_num = 1
+        # '''这里的三个参数应该都与size有关 这里暂时处理成定值'''
+
+        # object_poses_dict = {}
+        # key = 0
+
+        # for i in range(circle_num):
+        #     cam_radius = cam_radius_diff * (i + 1)
+
+        #     r1 = obj_radius
+        #     r2 = cam_radius
+        #     d = r1
+        #     center = (d**2 + r2**2 - r1**2) / (2*d**2) * obj + (d**2 + r1**2 - r2**2) / (2*d**2) * main_cam
+        #     rho = (abs((d + r1 + r2) * (-d + r1 + r2) * (d - r1 + r2) * (d + r1 - r2)))**(1/2) / (2*d)
+        #     z = (obj - main_cam)/r1
+        #     up = np.array([0, 1, 0])
+        #     x = np.cross(up, z)
+        #     y = np.cross(z, x)
+            
+        #     for j in range(pose_select_num):
+
+        #         theta = j / pose_select_num * 2 * np.pi
+        #         cam = center + rho * np.cos(theta) * x + rho * np.sin(theta) * y
+        #         object_poses_dict[key] = self.lookat(obj, cam)
+        #         key += 1
+
+        # return object_poses_dict
 
 
 
@@ -839,7 +875,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         environment_label = -1
         label_num = len(self.class_names)
         with torch.no_grad():
-            label_tensor = self.segmentor.segment_pano(pano_tensor, self.class_names).to(torch.float)
+            label_tensor = self.segmentor.segment_pano(pano_tensor, self.class_names).to(torch.float).unsqueeze(0)
 
         return label_tensor, label_num, environment_label
 
@@ -852,7 +888,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         # Load Initial RGB, Depth, Label Tensor
         panorama_rgb, panorama_depth = self.load_pano() # 建议检查一下panorama_rgb是不是H*W的
         panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # CHW, HW
-        panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb)
+        panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb) # 1HW, scalar, -1
 
         # Load Initial Depth_Edge, Depth_Edge_Inpainted_Mask
         depth_edge = self.find_depth_edge(panorama_depth.cpu().detach().numpy(), dilate_iter=1)
@@ -871,7 +907,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.sup_pool.gen_occ_grid(256)
 
         # Pano2Mesh
-        panorama_rgbl = torch.cat([panorama_rgb, panorama_label], dim = 0)
+        panorama_rgbl = torch.cat([panorama_rgb, panorama_label], dim = 0) # 4HW
         self.pano_distance_to_mesh(panorama_rgbl, panorama_depth, depth_edge_inpaint_mask)
         # self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo=True)
 
@@ -881,10 +917,10 @@ class Pano2RoomPipeline(torch.nn.Module):
         for label in range(label_num):
             if label == environment_label:
                 continue
-            object_tensor = self.find_object(label) # 3 * N
+            object_tensor = self.find_object(label) # 3N
             object_stats[label] = len(object_tensor[1])
-            object_centers[label] = object_tensor.mean(dim=1, dtype=torch.float64)
-        object_stats = sorted(object_stats.items(), key=lambda item:item[1], reverse=True) # list ?
+            object_centers[label] = object_tensor.mean(dim=1, dtype=torch.float64) # 3 dict (idx: center)
+        object_stats = sorted(object_stats.items(), key=lambda item:item[1], reverse=True) # tuple_list (idx, size)
         
         # Load Inpainting Camera Position
         camera_positions = CirclePoseSampler(panorama_depth, **self.pose_sampler) # N3
@@ -910,21 +946,24 @@ class Pano2RoomPipeline(torch.nn.Module):
         #     camera_positions.append(position)
 
         # Load Inpaintin Camera Pose & Mesh Inpainting
-        pose_idx = 0
+
         inpainted_panos_and_poses = []
         self.poses = []
         for camera_position in camera_positions:
-            pose_idx = pose_idx + 1
-            print(pose_idx)
-            
             pose_to_origin = {'0': self.lookat(np.array([0, 0, 0]), camera_position)}
             inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_to_origin))
             self.poses.extend(list(pose_to_origin.values()))
-            for idx, object_center in object_centers.items():
-                poses_ij = self.load_accompanied_poses(object_center.cpu().numpy(), camera_position, object_stats[idx])
+            for idx_size_tuple in object_stats:
+                idx, size = idx_size_tuple
+                poses_ij = self.load_accompanied_poses(object_centers[idx].cpu().numpy(), camera_position, size)
                 inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(poses_ij))
                 self.poses.extend(list(poses_ij.values()))
                 torch.cuda.empty_cache()
+            # for idx, object_center in object_centers.items():
+            #     poses_ij = self.load_accompanied_poses(object_center.cpu().numpy(), camera_position, object_stats[idx])
+            #     inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(poses_ij))
+            #     self.poses.extend(list(poses_ij.values()))
+            #     torch.cuda.empty_cache()
 
         # Train 3DGS
   #     self.poses = list(self.pose.values())
