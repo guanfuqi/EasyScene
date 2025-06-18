@@ -42,7 +42,14 @@ def _get_trajectory_normals(pts):
 
 
 class CirclePoseSampler(PoseSampler):
+    '''
+    - self.anchor_pts: tensor[n, 3]
+    '''
     def __init__(self, distance_map, traverse_ratios, n_anchors_per_ratio, test_z_min_max=(0., 0.), **kwargs):
+        '''
+        params:
+        - distance_map: tensor[H,W]
+        '''
         super().__init__()
         if torch.is_tensor(distance_map):
             distance_map = distance_map.cpu().numpy()
