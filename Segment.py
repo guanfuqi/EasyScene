@@ -21,7 +21,10 @@ import torch.nn.functional as F
 from utils.camera_utils import look_at
 from trimesh.creation import icosphere
 import math
-from utils.functions import get_cubemap_views_world_to_cam
+from utils.functions import get_cubemap_views_world_to_cam, pil_to_tensor
+
+test = 1
+# tot = 0
 
 def generate_spherical_cam_poses(subdivisions = 2) -> torch.Tensor:
     """
@@ -186,7 +189,7 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
         [0, 0, 1]
     ], dtype = np.float32)
 
-    out = - torch.zeros((pano_h, pano_w), dtype=np.int32)
+    out = -1 *  torch.zeros((pano_h, pano_w), dtype=torch.int32)
 
     px, py = np.meshgrid(np.arange(pano_w), np.arange(pano_h))
     theta, phi = px / pano_w * 2 * np.pi - np.pi, py / pano_h * np.pi - np.pi / 2
@@ -241,7 +244,8 @@ def generate_text_embeddings(classnames, templates, model, device):
 def apply_mask(image, mask):
     # 叠加mask于原图
     image_new = image.copy()
-    color_mask = (np.random.random(3)*255).astype(np.uint8)
+    # color_mask = (np.random.random(3)*255).astype(np.uint8)
+    color_mask = np.array([255,0,0], dtype = np.uint8)
     img = np.zeros((mask.shape[0],mask.shape[1],3),dtype = np.uint8)
     img[mask] = color_mask
     image_new = image_new * (1-0.35) + img * 0.35
@@ -249,17 +253,26 @@ def apply_mask(image, mask):
     # return image_new
 
 
-def visualize(image, class_num):
+def visualize(image, num):
     # 分类结果可视化
-    colors = np.linspace(0, 255, class_num + 1).astype(np.uint8)
-    image[:, :] = colors[image[:, :]]
+    colors = np.linspace(0, 255, num).astype(np.uint8)
+    image = np.clip(image, 0, num - 1)
+    image = colors[image[:, :]]
     return Image.fromarray(image.astype(np.uint8), mode = 'L')
 
 class Segmentor(object):
-    def __init__(self, H, W, fovx, class_names:list):
+    def __init__(self, H, W, fovx, class_names:list, *, min_ratio = 0.1, max_ratio = 0.6, min_conf = 0.8):
+        device = torch.device("cuda")
         self.H = H
         self.W = W
         self.fovx = fovx
+        self.class_names = class_names + ['#']
+        self.class_cnt = len(class_names)
+        self.min_ratio = min_ratio
+        self.max_ratio = max_ratio
+        self.min_conf = 0.8
+        self.id2type = []
+        self.tot = 0
 
         # 加载SAM
         checkpoint = './checkpoint/sam_vit_h_4b8939.pth'
@@ -287,7 +300,7 @@ class Segmentor(object):
 
         for image in tqdm(images):
             anns = self.masks_generator.generate(image)
-            result = -1 * torch.ones((image.shape[0],image.shape[1]), dtype = torch.int32)
+            result = -1 * self.class_cnt * torch.zeros((image.shape[0],image.shape[1]), dtype = torch.int32)
             for i, ann in enumerate(anns):
                 mask = ann['segmentation']
                 image_new = image.copy()
@@ -303,9 +316,24 @@ class Segmentor(object):
 
                 similarity = (100.0 * image_features.float() @ self.text_features.float().T).softmax(dim=-1)
                 # values, indices = similarity[0].topk(1)
-                index = torch.argmax(similarity[0], dim = -1)
-                if similarity[0][index] > 0.8:
-                    result[ind[0], ind[1]] = int(index)
+                index = torch.argmax(similarity[0], dim = -1).item()
+                area = mask.sum()
+
+                if((area > self.H * self.W * self.min_ratio and area < self.H * self.W * self.max_ratio) or similarity[0][index] >= self.min_conf):
+                    result[ind[0], ind[1]] = self.tot
+                    if similarity[0][index] < self.min_conf:
+                        index = self.class_cnt
+                    self.id2type.append(index)
+                    if(test):
+                        name = self.class_names[index]
+                        save_path = f"output/20250312193327/seg/segpers/{self.tot}_{name}"
+                        os.makedirs(save_path, exist_ok = True)
+                        mask_img_pil = apply_mask(image, mask)
+                        mask_img_pil.save(os.path.join(save_path, "mask.jpg"))
+                    
+                    self.tot = self.tot + 1
+
+                    
 
             results.append(result)
         return results
@@ -328,21 +356,21 @@ class Segmentor(object):
 
         print('加载透视图……')
         for i, pose in enumerate(poses):
-            images.append(equi2pers(pano, pose, fov, 512, 512))
+            images.append(equi2pers(pano, pose, fov, H, W))
             Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
 
         print('分割透视图……')
         segmented_images = self.segment(images)
 
         for i, segmented_image in enumerate(segmented_images):
-            visualize(segmented_image.detach().cpu().numpy(), len(class_names)).save(
+            visualize(segmented_image.detach().cpu().numpy(), self.tot).save(
                 f'output/20250312193327/seg/segpers/{i}.jpg')
 
         print('映射回全景图……')
         out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1]) # tensor
 
         print('分割结果可视化……')
-        segmented_pano = visualize(out, len(class_names))
+        segmented_pano = visualize(out, self.tot)
         # segmented_pano.show()
         segmented_pano.save('output/20250312193327/seg_pano.jpg')
 
@@ -355,6 +383,8 @@ if __name__ == "__main__":
     scenegraph = SceneGraph(exist = True, exist_path = "output/20250312193327")
     class_names = scenegraph.extract_objects_names()
     
-    pano_path = ""
+    pano_path = "output/20250312193327/pano.jpg"
     pano_pil = Image.open(pano_path)
-    pano:torch.tensor = torch.from_numpy(np.array(pano_pil)).permute(2, 1, 0).float()/255 #3HW
+    pano:torch.tensor = torch.tensor(np.array(pano_pil))[..., :3].permute(2,0,1).float()/255 #3HW
+    segmentor = Segmentor(H = 512, W = 512, fovx = 90, class_names = class_names)
+    segmentor.segment_pano(pano)
