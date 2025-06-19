@@ -1,5 +1,9 @@
+*.ckpt
 *.pth
-*.pt
+*.png
+*.mp4
+*.jpg
 __pycache__/
 .idea/
 .ipynb_checkpoints/
+/output/*
