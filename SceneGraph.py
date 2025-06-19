@@ -69,7 +69,7 @@ Example Output:
 """
     default_key = "sk-04cbd40be8f84c11a708796474316d93"
 
-    def __init__(self, old_text: str, ds_key: str = default_key, id: str = datetime.now().strftime('%Y%m%d%H%M%S'), *, exist: bool = False,  exist_path:str = None):
+    def __init__(self, old_text: str = None, ds_key: str = default_key, id: str = datetime.now().strftime('%Y%m%d%H%M%S'), *, exist: bool = False,  exist_path:str = None):
         if exist:
             for filename in os.listdir(exist_path):
                 # 筛选以 "text" 开头的文件，并排除子目录
