@@ -1,1 +1,0 @@
-CUDA_VISIBLE_DEVICES=0 python create_SDFT_pairs.py
