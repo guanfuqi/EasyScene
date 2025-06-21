@@ -886,7 +886,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
                 pose_dict = self.load_accompanied_poses(obj = object_centers[label], main_cam_pos = main_cam_pos, size = size)
                 inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
-                self.poses.extend(list(pose_dict.values()))
+                # self.poses.extend(list(pose_dict.values()))
         
         # Global Completion
         R = look_at(-camera_positions) # c2w N33
@@ -898,7 +898,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             pose_dict[key] = pose
             key = key + 1
         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
-        self.poses.extend(list(pose_dict.values()))
+        # self.poses.extend(list(pose_dict.values()))
 
         # Train 3DGS
   #     self.poses = list(self.pose.values())
@@ -959,7 +959,8 @@ class Pano2RoomPipeline(torch.nn.Module):
             'H': self.H,
             'frames': [],
         }
-
+        
+        self.poses = self.load_camera_poses(self.pano_center_offset)
         for i in range(len(self.poses)):
             gt_img = inpainted_img
 
