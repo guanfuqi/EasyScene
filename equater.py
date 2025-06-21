@@ -35,7 +35,6 @@ from scene import Scene, GaussianModel
 from gaussian_renderer import render
 from utils.graphics import focal2fov
 from utils.loss import l1_loss, ssim
-from random import randint
 
 from SceneGraph import SceneGraph
 from Segment import Segmentor
@@ -147,7 +146,8 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         self.pose_scale = 0.6
         self.pano_center_offset = (-0.2,0.3)
-        self.inpaint_frame_stride = 20   
+        self.inpaint_frame_stride = 20
+        self.poses = []
 
         # create exp dir
         self.setting = f""
@@ -447,7 +447,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 #            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            labels, _, _ = self.pano_segment(colors)
+            labels = torch.zeros((1, colors.shape[1]), dtype=torch.float)
             colors = torch.cat([colors, labels], dim = 0)
             '''inpainting过程'''
 
@@ -547,7 +547,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         INPUT:Null OUTPUT:panorama_tensor, depth 
         '''
 
-        image_path = f"input/input_panorama.png"
+        image_path = f"input/pano.png"
         image = Image.open(image_path)
         if image.size[0] < image.size[1]:
             image = image.transpose(Image.TRANSPOSE)
@@ -841,6 +841,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         # Load Initial RGB, Depth, Label Tensor
         panorama_rgb, panorama_depth = self.load_pano() # 建议检查一下panorama_rgb是不是H*W的
+        print(panorama_rgb.shape)
         panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # CHW, HW
         panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb) # 1HW, scalar, -1
 
