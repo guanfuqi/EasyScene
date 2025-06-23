@@ -839,7 +839,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         environment_label = self.segmentor.class_cnt
         label_num = self.segmentor.tot
         with torch.no_grad():
-            label_tensor = self.segmentor.segment_pano(pano_tensor).to(torch.float).unsqueeze(0)
+            label_tensor = self.segmentor.segment_pano(pano_tensor).to(torch.float).unsqueeze(0)/255
 
         return label_tensor, label_num, environment_label
 
@@ -904,8 +904,8 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
         # Global Completion
-        R = look_at(-camera_positions) # c2w [N, 3, 3]
-        T = -(camera_positions @ R).unsqueeze(1) # T [N, 3, 1]
+        R = look_at(-camera_positions) # c2w N33
+        T = -(camera_positions @ R).unsqueeze(1) # T N31
         poses = torch.cat([R.permute(0,2,1), T], dim = -1)
         pose_dict = {}
         key = 0

@@ -221,7 +221,7 @@ def trimesh_to_torch(mesh: trimesh.base.Trimesh, v=None, f=None, c=None):
     faces = torch.from_numpy(np.asarray(mesh.faces)).T
     if f is not None:
         faces = faces.to(f)
-    colors = torch.from_numpy(np.asarray(mesh.visual.vertex_colors, dtype=float) / 255).T[:3]
+    colors = torch.from_numpy(np.asarray(mesh.visual.vertex_colors, dtype=float) / 255).T[:4]
     if c is not None:
         colors = colors.to(c)
     return vertices, faces, colors
