@@ -40,7 +40,6 @@ from SceneGraph import SceneGraph
 from Segment import Segmentor
 from modules.pose_sampler.circle_pose_sampler import CirclePoseSampler
 
-import shutup
 
 '''
 STRUCTURE
@@ -566,7 +565,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         depth = depth/depth.max() * depth_scale_factor
         print(f"pano_fusion_distance...[{depth.min(), depth.mean(),depth.max()}]")
         
-        return panorama_tensor, depth# panorama_tensor:BCHW, depth:HW
+        return panorama_tensor, depth# panorama_tensor:CHW, depth:HW
         # return panorama_tensor, None
 
 
@@ -848,23 +847,17 @@ class Pano2RoomPipeline(torch.nn.Module):
 
     def run(self):
         
-        shutup.please()
+        # shutup.please()
 
-        # torch.set_default_tensor_type('torch.cuda.FloatTensor')s
+        torch.set_default_tensor_type('torch.cuda.FloatTensor')
         pano_path = "input/pano.png"
         image = Image.open(pano_path)
         pano:torch.tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
-        panorama_label = self.pano_segment(pano)
+        panorama_label, label_num, environment_label = self.pano_segment(pano)
 
         # Load Initial RGB, Depth, Label Tensor        
-        panorama_rgb, panorama_depth = self.load_pano() # [B, C, H, W]
-        panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb) # [1, H, W]
+        panorama_rgb, panorama_depth = self.load_pano() # [C, H, W]
         panorama_rgb, panorama_depth = panorama_rgb.cuda(), panorama_depth.cuda() # [C, H, W], [H, W]
-
-        # pano_path = "input/pano.png"
-        # pano_pil = Image.open(pano_path)
-        # pano:torch.tensor = torch.tensor(np.array(pano_pil))[..., :3].permute(2,0,1).float()/255
-        
 
 
         # Load Initial Depth_Edge & Depth_Edge_Inpainted_Mask
