@@ -4,7 +4,6 @@ import numpy as np
 from tqdm import tqdm
 
 from .pose_sampler import PoseSampler
-from utils.debug_utils import printarr
 from utils.camera_utils import *
 
 from scipy.ndimage import minimum_filter1d, gaussian_filter1d

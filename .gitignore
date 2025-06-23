@@ -1,7 +1,8 @@
 *.ckpt
 *.pth
 *.mp4
-__pycache__/
+__pycache__
+.pyc
 .idea/
 .ipynb_checkpoints/
 /output/*

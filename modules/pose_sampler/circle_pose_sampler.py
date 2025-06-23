@@ -1,4 +1,4 @@
-from pose_sampler import PoseSampler
+from .pose_sampler import PoseSampler
 
 import torch
 import torch.nn as nn

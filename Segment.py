@@ -189,7 +189,7 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
         [0, 0, 1]
     ], dtype = np.float32)
 
-    out = -1 *  torch.zeros((pano_h, pano_w), dtype=torch.int32)
+    out = -1 *  torch.ones((pano_h, pano_w), dtype=torch.int32)
 
     px, py = np.meshgrid(np.arange(pano_w), np.arange(pano_h))
     theta, phi = px / pano_w * 2 * np.pi - np.pi, py / pano_h * np.pi - np.pi / 2
@@ -383,7 +383,7 @@ if __name__ == "__main__":
     scenegraph = SceneGraph(exist = True, exist_path = "output/20250312193327")
     class_names = scenegraph.extract_objects_names()
     
-    pano_path = "output/20250312193327/pano.jpg"
+    pano_path = "input/pano.png"
     pano_pil = Image.open(pano_path)
     pano:torch.tensor = torch.tensor(np.array(pano_pil))[..., :3].permute(2,0,1).float()/255 #3HW
     segmentor = Segmentor(H = 512, W = 512, fovx = 90, class_names = class_names)

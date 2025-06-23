@@ -174,6 +174,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.scene_graph = SceneGraph(text, exist=True, exist_path='output/20250312193327')
 
         self.scene_depth_max = 4.0228885328450446
+
         # init segmentor
         self.class_names = self.scene_graph.extract_objects_names()
         self.segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
@@ -838,20 +839,22 @@ class Pano2RoomPipeline(torch.nn.Module):
         environment_label = self.segmentor.class_cnt
         label_num = self.segmentor.tot
         with torch.no_grad():
-            label_tensor = self.segmentor.segment_pano(pano_tensor, self.class_names).to(torch.float).unsqueeze(0)
+            label_tensor = self.segmentor.segment_pano(pano_tensor).to(torch.float).unsqueeze(0)
 
         return label_tensor, label_num, environment_label
 
 
     def run(self):
         
+
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
+
         # Load Initial RGB, Depth, Label Tensor
-        panorama_rgb, panorama_depth = self.load_pano() # 建议检查一下panorama_rgb是不是H*W的
-        print(panorama_rgb.shape)
+        panorama_rgb, panorama_depth = self.load_pano() # [B, C, H, W]
         panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # [C, H, W], [H, W]
         panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb) # [L, H, W], scalar, -1
+
 
         # Load Initial Depth_Edge & Depth_Edge_Inpainted_Mask
         depth_edge = self.find_depth_edge(panorama_depth.cpu().detach().numpy(), dilate_iter=1)
@@ -861,6 +864,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         depth_pil = Image.fromarray(visualize_depth_numpy(panorama_depth.cpu().detach().numpy())[0].astype(np.uint8))# depth格式->img
         _, _ = save_rgbd(depth_pil, depth_edge_pil, f'depth_edge', 0, self.save_path)
 
+
         # Registration
         self.sup_pool = SupInfoPool()
         self.sup_pool.register_sup_info(pose=torch.eye(4).cuda(),
@@ -869,13 +873,13 @@ class Pano2RoomPipeline(torch.nn.Module):
                                         distance=panorama_depth.unsqueeze(-1))
         self.sup_pool.gen_occ_grid(256)
 
+
         # Pano2Mesh
         panorama_rgbl = torch.cat([panorama_rgb, panorama_label], dim = 0) # [C+L, H, W]
         self.pano_distance_to_mesh(panorama_rgbl, panorama_depth, depth_edge_inpaint_mask)
 
         # Objects Inpainting
         camera_positions = CirclePoseSampler(panorama_depth, **self.pose_sampler) # [N, 3]
-
         object_centers = {}
         inpainted_panos_and_poses = []
         #  self.poses = []
@@ -898,11 +902,11 @@ class Pano2RoomPipeline(torch.nn.Module):
                 inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
                 # self.poses.extend(list(pose_dict.values()))
 
+
         # Global Completion
         R = look_at(-camera_positions) # c2w [N, 3, 3]
         T = -(camera_positions @ R).unsqueeze(1) # T [N, 3, 1]
         poses = torch.cat([R.permute(0,2,1), T], dim = -1)
-        ''''''''''''
         pose_dict = {}
         key = 0
         for pose in poses:
@@ -910,6 +914,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             key = key + 1
         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
         # self.poses.extend(list(pose_dict.values()))
+
 
         # Train 3DGS
   #     self.poses = list(self.pose.values())
@@ -928,7 +933,9 @@ class Pano2RoomPipeline(torch.nn.Module):
             'pcd_colors': self.colors[:3].permute(1,0).detach().cpu(),#初始为空的顶点颜色列表 形状3*0
             'frames': [],#初始为空的frame_list 用于存放训练用视图
         }
+
         for inpainted_pano_images, pano_pose_44 in inpainted_panos_and_poses:
+
             cubemaps, cubemaps_depth = self.pano_to_cubemap(inpainted_pano_images) # BCHW
             for i in range(len(cubemaps)):
                 inpainted_img = cubemaps[i]
@@ -958,10 +965,10 @@ class Pano2RoomPipeline(torch.nn.Module):
                 print(i)
                 '''frame的结构'''
 
-
         self.scene = Scene(traindata, self.gaussians, self.opt)   
         self.train_GS()
         outfile = self.gaussians.save_ply(os.path.join(self.save_path, '3DGS.ply'))
+
 
         # Eval GS
         evaldata = {
@@ -995,6 +1002,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                 'fovx': focal2fov(256, gt_img.shape[-1]),
                 'mesh_pose': self.poses[i].clone()
             })
+
         from scene.dataset_readers import loadCamerasFromData
         eval_GS_cams = loadCamerasFromData(evaldata, self.opt.white_background)
         self.eval_GS(eval_GS_cams)
