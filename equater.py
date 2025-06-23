@@ -551,7 +551,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         image_path = f"input/pano.png"
         image = Image.open(image_path)
-        if image.size[0] < image.size[1]:
+        if image.size[0] < image.size[1]: # size[0]表示图像的宽，size[1]表示图像的高
             image = image.transpose(Image.TRANSPOSE)
         image = functions.resize_image_with_aspect_ratio(image, new_width=self.pano_width)
         panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
