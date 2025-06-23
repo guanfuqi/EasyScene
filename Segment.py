@@ -189,7 +189,7 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
         [0, 0, 1]
     ], dtype = np.float32)
 
-    out = -1 *  torch.ones((pano_h, pano_w), dtype=torch.int32)
+    out = -1 *  np.ones((pano_h, pano_w), dtype=np.int32)
 
     px, py = np.meshgrid(np.arange(pano_w), np.arange(pano_h))
     theta, phi = px / pano_w * 2 * np.pi - np.pi, py / pano_h * np.pi - np.pi / 2
@@ -300,7 +300,7 @@ class Segmentor(object):
 
         for image in tqdm(images):
             anns = self.masks_generator.generate(image)
-            result = -1 * self.class_cnt * torch.zeros((image.shape[0],image.shape[1]), dtype = torch.int32)
+            result = -1 * self.class_cnt * np.zeros((image.shape[0],image.shape[1]), dtype = np.int32)
             for i, ann in enumerate(anns):
                 mask = ann['segmentation']
                 image_new = image.copy()
@@ -345,7 +345,6 @@ class Segmentor(object):
         :return: tensor[H,W]
         '''
 
-        print('加载相机……')
         poses = get_cubemap_views_world_to_cam()
         poses = [pose[:3].cpu().numpy() for pose in poses]
         fov = self.fovx
@@ -355,26 +354,17 @@ class Segmentor(object):
         pano = (pano.permute(1, 2, 0).detach().cpu().numpy()[..., :3] * 255).astype(np.uint8)
 
         print('加载透视图……')
-        for i, pose in enumerate(poses):
+        for i, pose in enumerate(poses[:1]):
             images.append(equi2pers(pano, pose, fov, H, W))
             Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
 
         print('分割透视图……')
         segmented_images = self.segment(images)
 
-        for i, segmented_image in enumerate(segmented_images):
-            visualize(segmented_image.detach().cpu().numpy(), self.tot).save(
-                f'output/20250312193327/seg/segpers/{i}.jpg')
-
         print('映射回全景图……')
         out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1]) # tensor
 
-        print('分割结果可视化……')
-        segmented_pano = visualize(out, self.tot)
-        # segmented_pano.show()
-        segmented_pano.save('output/20250312193327/seg_pano.jpg')
-
-        return out
+        return torch.from_numpy(out).float().cuda()/255
 
 
 if __name__ == "__main__":
