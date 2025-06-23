@@ -849,7 +849,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         
         # shutup.please()
 
-        torch.set_default_tensor_type('torch.cuda.FloatTensor')
+        # torch.set_default_tensor_type('torch.cuda.FloatTensor')
         pano_path = "input/pano.png"
         image = Image.open(pano_path)
         pano:torch.tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
