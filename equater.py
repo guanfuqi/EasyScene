@@ -763,7 +763,7 @@ class Pano2RoomPipeline(torch.nn.Module):
     
         return object_tensor
 
-    def load_accompanied_poses(self, obj: torch.Tensor, main_cam_pos: torch.Tensor, size: float):
+    def load_accompanied_poses(self, obj: torch.Tensor, main_cam_pos: torch.Tensor, size: float, pose_select_num=3, circle_num=2):
         '''
         load_camera_a_series_of_poses_surrounding_certain_object
         using look_at()
@@ -775,10 +775,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         print("main_cam shape:", main_cam.shape)
         '''
         
-        
         obj_radius = torch.norm(obj - main_cam_pos) # 标量型tensor
-        pose_select_num = 3
-        circle_num = 2
         cam_radius_diff = obj_radius / circle_num
         '''这里的三个参数应该都与size有关 这里暂时处理成定值'''
 
@@ -786,9 +783,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         key = 0
 
         for i in range(circle_num):
-
             cam_radius = cam_radius_diff * (i + 1)
-
             r1 = obj_radius
             r2 = cam_radius
             center = (r2**2) / (2 * r1**2) * obj + (1 - (r2**2) / (2 * r1**2)) * main_cam_pos
@@ -812,6 +807,20 @@ class Pano2RoomPipeline(torch.nn.Module):
         return object_poses_dict
 
 
+    def find_main_position(self, obj_center, main_select_position, size):
+        
+        pose_select_num = 3
+        circle_num = 1
+        poses = self.load_accompanied_poses(obj_center, main_select_position, size, pose_select_num, circle_num)
+        select_position = {}
+        for idx, pose in poses.items():
+            _, _, pano_mask = self.render_pano(pose)
+            view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
+            select_position[idx] = view_completeness
+        sorted_selected_position = sorted(select_position.items(), key=lambda item: item[1], reverse=True)
+        return poses[sorted_selected_position[0][0]]
+        
+        
     def pano_segment(self, pano_tensor):
         '''
         Args:
@@ -834,7 +843,6 @@ class Pano2RoomPipeline(torch.nn.Module):
         return label_tensor, label_num, environment_label
 
 
-
     def run(self):
         
         torch.set_default_tensor_type('torch.cuda.FloatTensor')
@@ -842,10 +850,10 @@ class Pano2RoomPipeline(torch.nn.Module):
         # Load Initial RGB, Depth, Label Tensor
         panorama_rgb, panorama_depth = self.load_pano() # 建议检查一下panorama_rgb是不是H*W的
         print(panorama_rgb.shape)
-        panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # CHW, HW
-        panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb) # 1HW, scalar, -1
+        panorama_rgb, panorama_depth = panorama_rgb.squeeze(0).cuda(), panorama_depth.cuda() # [C, H, W], [H, W]
+        panorama_label, label_num, environment_label = self.pano_segment(panorama_rgb) # [L, H, W], scalar, -1
 
-        # Load Initial Depth_Edge, Depth_Edge_Inpainted_Mask
+        # Load Initial Depth_Edge & Depth_Edge_Inpainted_Mask
         depth_edge = self.find_depth_edge(panorama_depth.cpu().detach().numpy(), dilate_iter=1)
         depth_edge_inpaint_mask = ~(torch.from_numpy(depth_edge).cuda().bool())# 反转edge_mask：inpainting过程中边缘不动
         # Save Depth_Edge as Image
@@ -862,37 +870,39 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.sup_pool.gen_occ_grid(256)
 
         # Pano2Mesh
-        panorama_rgbl = torch.cat([panorama_rgb, panorama_label], dim = 0) # 4HW
+        panorama_rgbl = torch.cat([panorama_rgb, panorama_label], dim = 0) # [C+L, H, W]
         self.pano_distance_to_mesh(panorama_rgbl, panorama_depth, depth_edge_inpaint_mask)
 
-        # Analyse Objects
-        camera_positions = CirclePoseSampler(panorama_depth, **self.pose_sampler) # N3
+        # Objects Inpainting
+        camera_positions = CirclePoseSampler(panorama_depth, **self.pose_sampler) # [N, 3]
+
         object_centers = {}
         inpainted_panos_and_poses = []
-        self.poses = []
+        #  self.poses = []
         for label in range(label_num):
             if self.segmentor.id2type[label] == environment_label:
                 continue
-            object_tensor = self.find_object(label).T # N3
+            object_tensor = self.find_object(label).T # [N, 3]
             size = self.size_factor * object_tensor.std(dim = 0).norm()
             self.size.append[size]
-            object_centers[label] = object_tensor.mean(dim = 0) # [3,] dict (idx: center)
-            cam_to_obj_vec: torch.Tensor = object_centers[label] - camera_positions # N3
-            cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) #[n,]
+            object_centers[label] = object_tensor.mean(dim = 0) # dict(idx: [3,])
+            cam_to_obj_vec: torch.Tensor = object_centers[label] - camera_positions # [N, 3]
+            cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) # [n,]
             mask = cam_to_obj_dis > size
             if mask.any():
                 idx = torch.argmin(cam_to_obj_dis[mask])
                 idx = torch.nonzero(mask)[idx][0]
-                main_cam_pos = camera_positions[idx]
-
-                pose_dict = self.load_accompanied_poses(obj = object_centers[label], main_cam_pos = main_cam_pos, size = size)
+                main_select_position = camera_positions[idx]
+                main_position = self.find_main_position(obj_center = object_centers[label], main_select_position = main_select_position, size = size)
+                pose_dict = self.load_accompanied_poses(obj = object_centers[label], main_cam_pos = main_position, size = size)
                 inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
                 # self.poses.extend(list(pose_dict.values()))
-        
+
         # Global Completion
-        R = look_at(-camera_positions) # c2w N33
-        T = -(camera_positions @ R).unsqueeze(1) # T N31
-        poses = torch.cat([R, T], dim = -1)
+        R = look_at(-camera_positions) # c2w [N, 3, 3]
+        T = -(camera_positions @ R).unsqueeze(1) # T [N, 3, 1]
+        poses = torch.cat([R.permute(0,2,1), T], dim = -1)
+        ''''''''''''
         pose_dict = {}
         key = 0
         for pose in poses:
