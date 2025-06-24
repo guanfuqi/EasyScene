@@ -774,7 +774,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         INPUT:label OUTPUT:object_tensor
         '''
 
-        mask = ((self.labels[0]*255 - float(id)).abs() < 1e-4)
+        mask = ((self.labels[0]*255 - id).abs() < 1e-4)
         object_tensor = self.vertices[:, mask]
     
         return object_tensor
@@ -805,7 +805,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             center = (r2**2) / (2 * r1**2) * obj + (1 - (r2**2) / (2 * r1**2)) * main_cam_pos
             rho = r2 / (2 * r1) * math.sqrt(4 * r1**2 - r2**2)
             z = (obj - main_cam_pos)/r1
-            up = torch.tensor([0, 1, 1])
+            up = torch.tensor([0., 1., 1.])
             x:torch.Tensor = torch.cross(up, z) / torch.linalg.norm(torch.cross(up, z))
             y:torch.Tensor = torch.cross(z, x) / torch.linalg.norm(torch.cross(z, x))
 
@@ -816,7 +816,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                 theta = j / pose_select_num * 2 * torch.pi + theta0
                 cam = center + rho * math.cos(theta) * x + rho * math.sin(theta) * y
                 R = look_at(to_vec = (obj - cam)) # 33
-                T = cam.squeeze(1)
+                T = cam.unsqueeze(1)
                 pose = torch.cat([R, T], dim = -1)
                 pose44 = torch.cat([pose, torch.tensor([[0.,0.,0.,1.]])], dim = 0)
                 assert pose44.shape == (4,4)
@@ -837,7 +837,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
             select_position[idx] = view_completeness
         sorted_selected_position = sorted(select_position.items(), key=lambda item: item[1], reverse=True)
-        return poses[sorted_selected_position[0][0]]
+        return poses[sorted_selected_position[0][0]][:3,3]
         
         
     def pano_segment(self, pano_tensor):
@@ -872,13 +872,13 @@ class Pano2RoomPipeline(torch.nn.Module):
         # shutup.please()
 
         # torch.set_default_tensor_type('torch.cuda.FloatTensor')
-        # image_path = f"input/pano.png"
-        # image = Image.open(image_path)
-        # if image.size[0] < image.size[1]: # size[0]表示图像的宽，size[1]表示图像的高
-        #     image = image.transpose(Image.TRANSPOSE)
-        # image = functions.resize_image_with_aspect_ratio(image, new_width=self.pano_width)
-        # panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
-        # panorama_label, obj_cnt, environment_label = self.pano_segment(panorama_tensor)
+        image_path = f"input/pano.png"
+        image = Image.open(image_path)
+        if image.size[0] < image.size[1]: # size[0]表示图像的宽，size[1]表示图像的高
+            image = image.transpose(Image.TRANSPOSE)
+        image = functions.resize_image_with_aspect_ratio(image, new_width=self.pano_width)
+        panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
+        panorama_label, obj_cnt, environment_label = self.pano_segment(panorama_tensor)
 
         # Load Initial RGB, Depth, Label Tensor        
         panorama_rgb, panorama_depth = self.load_pano() # [C, H, W]
@@ -904,9 +904,9 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
         # Pano2Mesh
-        # panorama_label = torch.stack([panorama_label, torch.zeros_like(panorama_label), torch.zeros_like(panorama_label)], dim = 0)
+        panorama_label = torch.stack([panorama_label, torch.zeros_like(panorama_label), torch.zeros_like(panorama_label)], dim = 0)
         self.pano_distance_to_mesh(panorama_rgb, panorama_depth, depth_edge_inpaint_mask)
-        # self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo = True)
+        self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo = True)
 
         # Objects Inpainting
         self.pose_sampler = CirclePoseSampler(panorama_depth, **self.pose_sampler_conf)
@@ -915,39 +915,32 @@ class Pano2RoomPipeline(torch.nn.Module):
         object_centers = {}
         inpainted_panos_and_poses = []
         self.poses = []
-        # for id in tqdm(range(obj_cnt)):
-        #     if self.segmentor.id2type[id] == environment_label:
-        #         continue
-        #     object_vertice = self.find_object(id).T # [N, 3]
-        #     obj_size = self.size_factor * object_vertice.std(dim = 0).norm() # tesnor 标量
-        #     self.size.append(obj_size)
-        #     object_centers[id] = object_vertice.mean(dim = 0) # dict(idx: [3,])
-        #     cam_to_obj_vec: torch.Tensor = object_centers[id] - camera_positions # [N, 3]
-        #     cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) # [n,]
-        #     mask = cam_to_obj_dis > obj_size
-        #     if mask.any():
-        #         print("no cameras!", id)
-        #         idx = torch.argmin(cam_to_obj_dis[mask])
-        #         idx = torch.nonzero(mask)[idx][0]
-        #         main_select_position = camera_positions[idx]
-        #         main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
-        #         pose_dict = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = main_position, size = obj_size)
-        #         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
-                # self.poses.extend(list(pose_dict.values()))
+        for id in tqdm(range(obj_cnt)):
+            if self.segmentor.id2type[id] == environment_label:
+                continue
+            object_vertice = self.find_object(id).T # [N, 3]
+            obj_size = self.size_factor * object_vertice.std(dim = 0).norm() # tesnor 标量
+            self.size.append(obj_size)
+            object_centers[id] = object_vertice.mean(dim = 0) # dict(idx: [3,])
+            cam_to_obj_vec: torch.Tensor = object_centers[id] - camera_positions # [N, 3]
+            cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) # [n,]
+            mask = cam_to_obj_dis > obj_size
+            if mask.any():
+                print("no cameras!", id)
+                idx = torch.argmin(cam_to_obj_dis[mask])
+                idx = torch.nonzero(mask)[idx][0]
+                main_select_position = camera_positions[idx]
+                main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
+                pose_dict = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = main_position, size = obj_size)
+                inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
+                self.poses.extend(list(pose_dict.values()))
 
 
         # Global Completion
         pose_dict = {}
         cam_cnt = len(camera_positions)
-        with open("archor_pts.txt", "w") as f:
-            for cam in camera_positions:
-                for x in cam:
-                    f.write(f"{cam[0]} {cam[1]} {cam[2]}\n")
-                
-        # to_vecs = torch.cat([-camera_positions[..., :1], torch.zeros(cam_cnt,1), -camera_positions[..., 2:]], dim = -1) # N 3
-        # up_vecs = torch.tensor([0.,-1.,0.]).repeat((cam_cnt, 1)) # N 3
-        # Rs = look_at(to_vecs, up_vecs).permute(0,2,1) # N 3 3
-        for key in range(cam_cnt):
+
+        for key in range(0, cam_cnt, 3):
             to_vec = torch.tensor([-camera_positions[key][0].item(), 0., -camera_positions[key][2].item()])
             R = look_at(to_vec)
             T = camera_positions[key].unsqueeze(1)
