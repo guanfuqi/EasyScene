@@ -1,3 +1,4 @@
+
 import math
 import torch
 import os
@@ -19,7 +20,7 @@ from utils.common_utils import (
 )
 
 import time
-from utils.camera_utils import *
+from utils.camera_utils import gen_pano_rays
 
 import utils.functions as functions
 from utils.functions import rot_x_world_to_cam, rot_y_world_to_cam, rot_z_world_to_cam, colorize_single_channel_image, write_video
@@ -39,6 +40,8 @@ from utils.loss import l1_loss, ssim
 from SceneGraph import SceneGraph
 from Segment import Segmentor
 from modules.pose_sampler.circle_pose_sampler import CirclePoseSampler
+import warnings
+warnings.filterwarnings("ignore")
 
 
 '''
@@ -120,6 +123,17 @@ run()
     A COMPLETE PIPELINE
 '''
 
+
+def look_at(to_vec, up_vec = None):
+    to_vec /= to_vec.norm(dim = -1)
+    if up_vec == None:
+        up_vec = torch.tensor([0., 1., 0.])
+    else:
+        up_vec /= up_vec.norm(dim = -1)
+    le_vec = torch.cross(up_vec, to_vec)
+    up_vec = torch.cross(to_vec, le_vec)
+    return torch.stack([le_vec, up_vec, to_vec], dim = 0) # 3,3
+
 @torch.no_grad()
 class Pano2RoomPipeline(torch.nn.Module):
     def __init__(self, attempt_idx=""):
@@ -132,7 +146,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.faces_per_pixel = 8
         self.fov = 90
         self.R, self.T = torch.Tensor([[[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]]]), torch.Tensor([[0., 0., 0.]])
-        self.pano_width, self.pano_height = 1024, 512
+        self.pano_width, self.pano_height = 1024*2, 512*2
         self.H, self.W = 512, 512
         self.device = "cuda:0"
 
@@ -140,7 +154,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.rendered_depth = torch.zeros((self.H, self.W), device=self.device) 
         self.inpaint_mask = torch.ones((self.H, self.W), device=self.device, dtype=torch.bool)  
         self.vertices = torch.empty((3, 0), device=self.device, requires_grad=False)# gaussian_train_data
-        self.colors = torch.empty((4, 0), device=self.device, requires_grad=False)# 前3行表示颜色，第四行表示标签
+        self.colors = torch.empty((3, 0), device=self.device, requires_grad=False)# 前3行表示颜色
         self.labels = torch.empty((3, 0), device=self.device, requires_grad=False)#pseudo_rgb
         self.faces = torch.empty((3, 0), device=self.device, dtype=torch.long, requires_grad=False)# gaussian_train_data
         self.pix_to_face = None
@@ -186,7 +200,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.size_factor = 1.5
 
         # circle_sampler parameters
-        self.pose_sampler = {
+        self.pose_sampler_conf = {
             'traverse_ratios': [0.2, 0.4, 0.6],
             'n_anchors_per_ratio': [8, 8, 8]
         }
@@ -210,7 +224,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         rendered_image_tensor, self.rendered_depth, self.inpaint_mask, self.pix_to_face, self.z_buf, self.mesh = render_mesh(
             vertices=self.vertices,
             faces=self.faces,
-            vertex_features=self.colors[:3],# 只用前三个，因为前三个表示颜色，第四个表示标签
+            vertex_features=self.colors,# 只用前三个，因为前三个表示颜色，第四个表示标签
             H=self.H,
             W=self.W,
             fov_in_degrees=self.fov,
@@ -243,7 +257,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         cubemap_list = [] 
         for cubemap_pose in self.cubemap_w2c_list:# self.cubemap_w2c_list于__init__中定义，本质上是pano_to_cubemap的六个坐标转换矩阵形成的列表
             pose_tmp = pose.clone()
-            pose_tmp = cubemap_pose.cuda().float() @ pose_tmp.float()# world_to_pano@pano_to_cubemap_sub_i=world_to_cubemap_sub_i 注意可能被名称误导
+            pose_tmp = cubemap_pose.cuda().float() @ pose_tmp# world_to_pano@pano_to_cubemap_sub_i=world_to_cubemap_sub_i 注意可能被名称误导
             rendered_image_tensor, rendered_image_pil = self.project(pose_tmp.cuda())# 渲染cubemap
 
             rgb_CHW = rendered_image_tensor.squeeze(0).cuda()
@@ -266,7 +280,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
 
-    def rgbd_to_mesh(self, rgbl, depth, world_to_cam=None, mask=None, pix_to_face=None, using_distance_map=False, pseudo=False):
+    def rgbd_to_mesh(self, rgb, depth, world_to_cam=None, mask=None, pix_to_face=None, using_distance_map=False, pseudo=False):
         '''
         RGBD_to_mesh
         using features_to_world_space_mesh()
@@ -275,7 +289,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         '''
         
         predicted_depth = depth.cuda()
-        rgbl = rgbl.squeeze(0).cuda()
+        rgb = rgb.squeeze(0).cuda()
 
         if world_to_cam is None:
             world_to_cam = torch.eye(4, dtype=torch.float32)
@@ -294,7 +308,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             return
 
         vertices, faces, colors = features_to_world_space_mesh(
-                colors=rgbl,
+                colors=rgb,
                 depth=predicted_depth,
                 fov_in_degrees=self.fov,
                 world_to_cam=world_to_cam,
@@ -307,27 +321,27 @@ class Pano2RoomPipeline(torch.nn.Module):
         )
         '''完成新mesh的生成'''
 
-        # if not pseudo:
+        if not pseudo:
 
-        faces += self.vertices.shape[1]# 面索引偏移 避免与现有顶点冲突
+            faces += self.vertices.shape[1]# 面索引偏移 避免与现有顶点冲突
 
-        self.vertices_restore = self.vertices.clone()
-        self.colors_restore = self.colors.clone()
-        self.faces_restore = self.faces.clone()
-        '''保存 方便回退'''
+            self.vertices_restore = self.vertices.clone()
+            self.colors_restore = self.colors.clone()
+            self.faces_restore = self.faces.clone()
+            '''保存 方便回退'''
 
-        self.vertices = torch.cat([self.vertices, vertices], dim=1)
-        self.colors = torch.cat([self.colors, colors], dim=1)
-        self.faces = torch.cat([self.faces, faces], dim=1)
-        '''合并mesh'''
+            self.vertices = torch.cat([self.vertices, vertices], dim=1)
+            self.colors = torch.cat([self.colors, colors], dim=1)
+            self.faces = torch.cat([self.faces, faces], dim=1)
+            '''合并mesh'''
 
-        # else:
+        else:
 
-        #     self.labels_restore = self.labels.clone()
-        #     '''保存 方便回退'''
+            self.labels_restore = self.labels.clone()
+            '''保存 方便回退'''
 
-        #     self.labels = torch.cat([self.labels, colors_or_labels], dim=1)
-        #     '''合并mesh'''
+            self.labels = torch.cat([self.labels, colors], dim=1)
+            '''合并mesh'''
 
 
 
@@ -449,8 +463,8 @@ class Pano2RoomPipeline(torch.nn.Module):
 #            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
                 # inpainting pano
             colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            labels = torch.zeros((1, colors.shape[1]), dtype=torch.float)
-            colors = torch.cat([colors, labels], dim = 0)
+            # labels = torch.zeros((1, colors.shape[1]), dtype=torch.float)
+            # colors = torch.cat([colors, labels], dim = 0)
             '''inpainting过程'''
 
             # apply_GeoCheck:
@@ -754,14 +768,14 @@ class Pano2RoomPipeline(torch.nn.Module):
             
 
 
-    def find_object(self, label):
+    def find_object(self, id):
         '''
         find_object_in_vertices_tensor_given_segment_label
         using None
         INPUT:label OUTPUT:object_tensor
         '''
 
-        mask = ((self.colors[3] - label).abs < 1e-4)
+        mask = ((self.labels[0]*255 - id).abs() < 1e-4)
         object_tensor = self.vertices[:, mask]
     
         return object_tensor
@@ -792,7 +806,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             center = (r2**2) / (2 * r1**2) * obj + (1 - (r2**2) / (2 * r1**2)) * main_cam_pos
             rho = r2 / (2 * r1) * math.sqrt(4 * r1**2 - r2**2)
             z = (obj - main_cam_pos)/r1
-            up = torch.tensor([0, 1, 1])
+            up = torch.tensor([0., 1., 1.])
             x:torch.Tensor = torch.cross(up, z) / torch.linalg.norm(torch.cross(up, z))
             y:torch.Tensor = torch.cross(z, x) / torch.linalg.norm(torch.cross(z, x))
 
@@ -802,9 +816,12 @@ class Pano2RoomPipeline(torch.nn.Module):
 
                 theta = j / pose_select_num * 2 * torch.pi + theta0
                 cam = center + rho * math.cos(theta) * x + rho * math.sin(theta) * y
-                R = look_at(to_vec = (obj - cam).unsqueeze(0)).squeeze().T # 33
-                T = - R @ cam.unsqueeze(1) # 31
-                object_poses_dict[key] = torch.cat([R,T], dim = -1)
+                R = look_at(to_vec = (obj - cam)) # 33
+                T = cam.unsqueeze(1)
+                pose = torch.cat([R, T], dim = -1)
+                pose44 = torch.cat([pose, torch.tensor([[0.,0.,0.,1.]])], dim = 0)
+                assert pose44.shape == (4,4)
+                object_poses_dict[key] = pose44
                 key += 1
 
         return object_poses_dict
@@ -821,7 +838,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
             select_position[idx] = view_completeness
         sorted_selected_position = sorted(select_position.items(), key=lambda item: item[1], reverse=True)
-        return poses[sorted_selected_position[0][0]]
+        return poses[sorted_selected_position[0][0]][:3,3]
         
         
     def pano_segment(self, pano_tensor):
@@ -839,10 +856,16 @@ class Pano2RoomPipeline(torch.nn.Module):
         # import Segment
         
         environment_label = self.segmentor.class_cnt
-        label_tensor = self.segmentor.segment_pano(pano_tensor).unsqueeze(0)
-        label_num = self.segmentor.tot
+        label_tensor = self.segmentor.segment_pano(pano_tensor)/255
+        id_cnt = self.segmentor.tot
 
-        return label_tensor, label_num, environment_label
+        return label_tensor, id_cnt, environment_label
+    
+    def xyz_to_xz_y(self, xyz_coords):
+        x = xyz_coords[..., 0]
+        y = xyz_coords[..., 1]
+        z = xyz_coords[..., 2]
+        return torch.stack([x, z, -y], dim = -1)
 
 
     def run(self):
@@ -850,10 +873,13 @@ class Pano2RoomPipeline(torch.nn.Module):
         # shutup.please()
 
         # torch.set_default_tensor_type('torch.cuda.FloatTensor')
-        pano_path = "input/pano.png"
-        image = Image.open(pano_path)
-        pano:torch.tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
-        panorama_label, label_num, environment_label = self.pano_segment(pano)
+        image_path = f"input/pano.png"
+        image = Image.open(image_path)
+        if image.size[0] < image.size[1]: # size[0]表示图像的宽，size[1]表示图像的高
+            image = image.transpose(Image.TRANSPOSE)
+        image = functions.resize_image_with_aspect_ratio(image, new_width=self.pano_width)
+        panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
+        panorama_label, obj_cnt, environment_label = self.pano_segment(panorama_tensor)
 
         # Load Initial RGB, Depth, Label Tensor        
         panorama_rgb, panorama_depth = self.load_pano() # [C, H, W]
@@ -879,43 +905,50 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
         # Pano2Mesh
-        panorama_rgbl = torch.cat([panorama_rgb, panorama_label], dim = 0) # [C+L, H, W]
-        self.pano_distance_to_mesh(panorama_rgbl, panorama_depth, depth_edge_inpaint_mask)
+        panorama_label = torch.stack([panorama_label, torch.zeros_like(panorama_label), torch.zeros_like(panorama_label)], dim = 0)
+        self.pano_distance_to_mesh(panorama_rgb, panorama_depth, depth_edge_inpaint_mask)
+        self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo = True)
 
         # Objects Inpainting
-        camera_positions = CirclePoseSampler(panorama_depth, **self.pose_sampler) # [N, 3]
+        self.pose_sampler = CirclePoseSampler(panorama_depth, **self.pose_sampler_conf)
+        camera_positions = self.pose_sampler.anchor_pts # [N, 3]
+        camera_positions = self.xyz_to_xz_y(camera_positions) # [N, 3]
         object_centers = {}
         inpainted_panos_and_poses = []
-        #  self.poses = []
-        for label in range(label_num):
-            if self.segmentor.id2type[label] == environment_label:
+        self.poses = []
+        for id in tqdm(range(obj_cnt)):
+            if self.segmentor.id2type[id] == environment_label:
                 continue
-            object_tensor = self.find_object(label).T # [N, 3]
-            size = self.size_factor * object_tensor.std(dim = 0).norm()
-            self.size.append[size]
-            object_centers[label] = object_tensor.mean(dim = 0) # dict(idx: [3,])
-            cam_to_obj_vec: torch.Tensor = object_centers[label] - camera_positions # [N, 3]
+            object_vertice = self.find_object(id).T # [N, 3]
+            obj_size = self.size_factor * object_vertice.std(dim = 0).norm() # tesnor 标量
+            self.size.append(obj_size)
+            object_centers[id] = object_vertice.mean(dim = 0) # dict(idx: [3,])
+            cam_to_obj_vec: torch.Tensor = object_centers[id] - camera_positions # [N, 3]
             cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) # [n,]
-            mask = cam_to_obj_dis > size
+            mask = cam_to_obj_dis > obj_size
             if mask.any():
+                print("no cameras!", id)
                 idx = torch.argmin(cam_to_obj_dis[mask])
                 idx = torch.nonzero(mask)[idx][0]
                 main_select_position = camera_positions[idx]
-                main_position = self.find_main_position(obj_center = object_centers[label], main_select_position = main_select_position, size = size)
-                pose_dict = self.load_accompanied_poses(obj = object_centers[label], main_cam_pos = main_position, size = size)
+                main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
+                pose_dict = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = main_position, size = obj_size)
                 inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
-                # self.poses.extend(list(pose_dict.values()))
+                self.poses.extend(list(pose_dict.values()))
 
 
         # Global Completion
-        R = look_at(-camera_positions) # c2w N33
-        T = -(camera_positions @ R).unsqueeze(1) # T N31
-        poses = torch.cat([R.permute(0,2,1), T], dim = -1)
         pose_dict = {}
-        key = 0
-        for pose in poses:
-            pose_dict[key] = pose
-            key = key + 1
+        cam_cnt = len(camera_positions)
+
+        for key in range(0, cam_cnt, 3):
+            to_vec = torch.tensor([-camera_positions[key][0].item(), 0., -camera_positions[key][2].item()])
+            R = look_at(to_vec)
+            T = camera_positions[key].unsqueeze(1)
+            pose = torch.cat([R, T], dim = -1)
+            pose44 = torch.cat([pose, torch.tensor([[0.,0.,0.,1.]])], dim = 0)
+            assert pose44.shape == (4,4)
+            pose_dict[key] = pose44
         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
         # self.poses.extend(list(pose_dict.values()))
 

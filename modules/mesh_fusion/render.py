@@ -29,7 +29,7 @@ from pytorch3d.renderer.blending import hard_rgb_blend, softmax_rgb_blend
 import math
 
 
-def clean_mesh(vertices: torch.Tensor, faces: torch.Tensor, colors: torch.Tensor, edge_threshold: float = 0.1, min_triangles_connected: int = -1, fill_holes: bool = True) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+def clean_mesh(vertices: torch.Tensor, faces: torch.Tensor, colors: torch.Tensor, edge_threshold: float = 0.1, min_triangles_connected: int = -1, fill_holes: bool = True) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Performs the following steps to clean the mesh:
 

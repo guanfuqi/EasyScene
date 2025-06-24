@@ -353,6 +353,8 @@ class Segmentor(object):
         images = []
         pano = (pano.permute(1, 2, 0).detach().cpu().numpy()[..., :3] * 255).astype(np.uint8)
 
+        os.makedirs("output/20250312193327/seg/pers", exist_ok= True)
+        os.makedirs("output/20250312193327/seg/segpers", exist_ok= True)
         print('加载透视图……')
         for i, pose in enumerate(poses[:1]):
             images.append(equi2pers(pano, pose, fov, H, W))
@@ -364,7 +366,7 @@ class Segmentor(object):
         print('映射回全景图……')
         out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1]) # tensor
 
-        return torch.from_numpy(out).float().cuda()/255
+        return torch.from_numpy(out).to(torch.float32).cuda()
 
 
 if __name__ == "__main__":
