@@ -806,7 +806,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             center = (r2**2) / (2 * r1**2) * obj + (1 - (r2**2) / (2 * r1**2)) * main_cam_pos
             rho = r2 / (2 * r1) * math.sqrt(4 * r1**2 - r2**2)
             z = (obj - main_cam_pos)/r1
-            up = torch.tensor([0., 1., 1.])
+            up = torch.tensor([0., 1., 0.])
             x:torch.Tensor = torch.cross(up, z) / torch.linalg.norm(torch.cross(up, z))
             y:torch.Tensor = torch.cross(z, x) / torch.linalg.norm(torch.cross(z, x))
 
