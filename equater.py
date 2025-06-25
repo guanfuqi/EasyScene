@@ -207,6 +207,8 @@ class Pano2RoomPipeline(torch.nn.Module):
             'n_anchors_per_ratio': [8, 8, 8]
         }
 
+        self.namer = 0
+
 
     def load_modules(self):
         '''在__init__函数中调用 加载两个模型inpainter, geo_predictor'''
@@ -490,21 +492,22 @@ class Pano2RoomPipeline(torch.nn.Module):
             self.sup_pool.register_sup_info(pose=perf_pose.cuda(), mask=sup_mask.cuda(), rgb=colors.cuda(), distance=distances.unsqueeze(-1), normal=normals)
             
             # save renderred
+            self.namer += 1
             panorama_tensor_pil = functions.tensor_to_pil(pano_rgb.unsqueeze(0))
-            panorama_tensor_pil.save(f"{self.save_path}/renderred_pano_{key}.png")
+            panorama_tensor_pil.save(f"{self.save_path}/renderred_pano_{self.namer}.png")
             if self.save_details:
                 depth_pil = Image.fromarray(colorize_single_channel_image(pano_distance.unsqueeze(0)/self.scene_depth_max))
-                depth_pil.save(f"{self.save_path}/renderred_depth_{key}.png")        
+                depth_pil.save(f"{self.save_path}/renderred_depth_{self.namer}.png")        
                 inpaint_mask_pil = Image.fromarray(pano_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
-                inpaint_mask_pil.save(f"{self.save_path}/mask_{key}.png")  
+                inpaint_mask_pil.save(f"{self.save_path}/mask_{self.namer}.png")  
                 inpaint_mask_pil = Image.fromarray(pano_inpaint_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
-                inpaint_mask_pil.save(f"{self.save_path}/inpaint_mask_{key}.png")  
+                inpaint_mask_pil.save(f"{self.save_path}/inpaint_mask_{self.namer}.png")  
 
             # save inpainted
             panorama_tensor_pil = functions.tensor_to_pil(colors.permute(2,0,1).unsqueeze(0))
-            panorama_tensor_pil.save(f"{self.save_path}/inpainted_pano_{key}.png")
+            panorama_tensor_pil.save(f"{self.save_path}/inpainted_pano_{self.namer}.png")
             depth_pil = Image.fromarray(colorize_single_channel_image(distances.unsqueeze(0)/self.scene_depth_max))
-            depth_pil.save(f"{self.save_path}/inpainted_depth_{key}.png") 
+            depth_pil.save(f"{self.save_path}/inpainted_depth_{self.namer}.png") 
 
             # collect pano images for GS training
             inpainted_panos_and_poses += [(colors.permute(2,0,1).unsqueeze(0), pose.clone())] #BCHW, 44
@@ -767,7 +770,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         write_video(f"{self.save_path}/GS_render_video.mp4", framelist[6:], fps=30)
         write_video(f"{self.save_path}/GS_depth_video.mp4", depthlist[6:], fps=30)
         print("Result saved at: ", self.save_path)
-            
+
 
 
     def find_object(self, id):
@@ -781,6 +784,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         object_tensor = self.vertices[:, mask]
     
         return object_tensor
+
+
 
     def load_accompanied_poses(self, obj: torch.Tensor, main_cam_pos: torch.Tensor, size: float, pose_select_num=3, circle_num=3):
         '''
