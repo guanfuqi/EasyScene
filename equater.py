@@ -847,17 +847,15 @@ class Pano2RoomPipeline(torch.nn.Module):
     def completeness(self, pose_dict):
         
         threshold = 0.9
-        pose_tensor = torch.tensor(pose_dict.values())
-        view_completenesses = []
-        for pose in pose_tensor:
+        poses = []
+        for pose in pose_dict.values():
             _, _, pano_mask = self.render_pano(pose)
             view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
-            view_completenesses.append(view_completeness)
-        view_completenesses = torch.tensor(view_completenesses)
-
-        pose_mask = pose_tensor[torch.where(view_completenesses > threshold)]
-
-        return pose_mask[random.randint(0, pose_mask.shape[0]-1)] # torch.tensor [4, 4]
+            print("view_completeness: ",view_completeness.item())
+            if view_completeness.item() > threshold:
+                poses.append(pose)
+                
+        return random.choice(poses) # torch.tensor [4, 4]
 
 
     def pano_segment(self, pano_tensor):
@@ -948,12 +946,12 @@ class Pano2RoomPipeline(torch.nn.Module):
             cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) # [n,]
             mask = cam_to_obj_dis > obj_size
             if mask.any():
-                print("no cameras!", id)
+                # print("no cameras!", id)
                 idx = torch.argmin(cam_to_obj_dis[mask])
                 idx = torch.nonzero(mask)[idx][0]
                 # main_select_position = camera_positions[idx]
                 # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
-                poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx], size = obj_size, pose_select_num = 3, circle_num = 1)
+                poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx], size = obj_size, pose_select_num = 3, circle_num = 3)
                 pose_dict[id] = self.completeness(poses)
         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
@@ -1036,7 +1034,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             'frames': [],
         }
         
-        self.poses = self.load_camera_poses(self.pano_center_offset)
+        _, self.poses = self.load_camera_poses(self.pano_center_offset)
         for i in range(len(self.poses)):
             gt_img = inpainted_img
 
