@@ -1,3 +1,4 @@
+
 import math
 import torch
 import os
@@ -41,6 +42,8 @@ from Segment import Segmentor
 from modules.pose_sampler.circle_pose_sampler import CirclePoseSampler
 import warnings
 warnings.filterwarnings("ignore")
+
+import random
 
 
 '''
@@ -779,7 +782,7 @@ class Pano2RoomPipeline(torch.nn.Module):
     
         return object_tensor
 
-    def load_accompanied_poses(self, obj: torch.Tensor, main_cam_pos: torch.Tensor, size: float, pose_select_num=3, circle_num=2):
+    def load_accompanied_poses(self, obj: torch.Tensor, main_cam_pos: torch.Tensor, size: float, pose_select_num=3, circle_num=3):
         '''
         load_camera_a_series_of_poses_surrounding_certain_object
         using look_at()
@@ -800,12 +803,13 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         for i in range(circle_num):
             cam_radius = cam_radius_diff * (i + 1)
+            cam_radius = cam_radius * math.cos(math.pi / (circle_num + 1) / 2 * i)
             r1 = obj_radius
             r2 = cam_radius
             center = (r2**2) / (2 * r1**2) * obj + (1 - (r2**2) / (2 * r1**2)) * main_cam_pos
             rho = r2 / (2 * r1) * math.sqrt(4 * r1**2 - r2**2)
             z = (obj - main_cam_pos)/r1
-            up = torch.tensor([0., 1., 1.])
+            up = torch.tensor([0., 1., 0.])
             x:torch.Tensor = torch.cross(up, z) / torch.linalg.norm(torch.cross(up, z))
             y:torch.Tensor = torch.cross(z, x) / torch.linalg.norm(torch.cross(z, x))
 
@@ -838,8 +842,24 @@ class Pano2RoomPipeline(torch.nn.Module):
             select_position[idx] = view_completeness
         sorted_selected_position = sorted(select_position.items(), key=lambda item: item[1], reverse=True)
         return poses[sorted_selected_position[0][0]][:3,3]
+
+    
+    def completeness(self, pose_dict):
         
-        
+        threshold = 0.9
+        pose_tensor = torch.tensor(pose_dict.values())
+        view_completenesses = []
+        for pose in pose_tensor:
+            _, _, pano_mask = self.render_pano(pose)
+            view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
+            view_completenesses.append(view_completeness)
+        view_completenesses = torch.tensor(view_completenesses)
+
+        pose_mask = pose_tensor[torch.where(view_completenesses > threshold)]
+
+        return pose_mask[random.randint(0, pose_mask.shape[0]-1)] # torch.tensor [4, 4]
+
+
     def pano_segment(self, pano_tensor):
         '''
         Args:
@@ -870,8 +890,9 @@ class Pano2RoomPipeline(torch.nn.Module):
     def run(self):
         
         # shutup.please()
-
         # torch.set_default_tensor_type('torch.cuda.FloatTensor')
+
+        # Load Segmentation
         image_path = f"input/pano.png"
         image = Image.open(image_path)
         if image.size[0] < image.size[1]: # size[0]表示图像的宽，size[1]表示图像的高
@@ -880,7 +901,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
         panorama_label, obj_cnt, environment_label = self.pano_segment(panorama_tensor)
 
-        # Load Initial RGB, Depth, Label Tensor        
+
+        # Load Initial RGB, Depth, Label Tensor
         panorama_rgb, panorama_depth = self.load_pano() # [C, H, W]
         panorama_rgb, panorama_depth = panorama_rgb.cuda(), panorama_depth.cuda() # [C, H, W], [H, W]
 
@@ -913,8 +935,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         camera_positions = self.pose_sampler.anchor_pts # [N, 3]
         camera_positions = self.xyz_to_xz_y(camera_positions) # [N, 3]
         object_centers = {}
+        pose_dict = {}
         inpainted_panos_and_poses = []
-        self.poses = []
         for id in tqdm(range(obj_cnt)):
             if self.segmentor.id2type[id] == environment_label:
                 continue
@@ -929,11 +951,11 @@ class Pano2RoomPipeline(torch.nn.Module):
                 print("no cameras!", id)
                 idx = torch.argmin(cam_to_obj_dis[mask])
                 idx = torch.nonzero(mask)[idx][0]
-                main_select_position = camera_positions[idx]
-                main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
-                pose_dict = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = main_position, size = obj_size)
-                inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
-                self.poses.extend(list(pose_dict.values()))
+                # main_select_position = camera_positions[idx]
+                # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
+                poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx], size = obj_size, pose_select_num = 3, circle_num = 1)
+                pose_dict[id] = self.completeness(poses)
+        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
 
         # Global Completion
