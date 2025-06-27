@@ -419,20 +419,16 @@ class Pano2RoomPipeline(torch.nn.Module):
         INPUT:pose_dict OUTPUT:inpainted_panos_and_poses(list)
         '''
 
-        print("stage_inpaint_pano_greedy_search")
-        pano_rgb, pano_distance, pano_mask = self.render_pano(self.world_to_cam)
-        '''initialize原始pano 与修复后的版本作几何检查'''
-
         inpainted_panos_and_poses = []
         while len(pose_dict) > 0:
             print(f"len(pose_dict):{len(pose_dict)}")
 
             values_sampled_poses = []
-            keys = list(pose_dict.keys())# 获取dict的key形成list
-            for key in keys:# 遍历pose_dict
+            keys = list(pose_dict.keys())
+            for key in keys:
                 pose = pose_dict[key]
-                pano_rgb, pano_distance, pano_mask = self.render_pano(pose.cuda())# 渲染每一pose下的panorama
-                view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])# 计算完整度
+                pano_rgb, pano_distance, pano_mask = self.render_pano(pose.cuda())
+                view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1]) # 该视角的完整度
                 
                 values_sampled_poses += [(key, view_completeness, pose)]
                 torch.cuda.empty_cache() 
@@ -440,56 +436,39 @@ class Pano2RoomPipeline(torch.nn.Module):
                 break
 
             # find inpainting with least view completeness
-            values_sampled_poses = sorted(values_sampled_poses, key=lambda item: item[1])# 对完成度排序
+            values_sampled_poses = sorted(values_sampled_poses, key=lambda item: item[1])
             # least_complete_view = values_sampled_poses[0]
-            least_complete_view = values_sampled_poses[len(values_sampled_poses)*2//3]# 筛选后2/3分位的视图位置
+            least_complete_view = values_sampled_poses[len(values_sampled_poses)*2//3] # 选取完整度在排名前2/3左右的视角
 
             key, view_completeness, pose = least_complete_view
             print(f"least_complete_view:{view_completeness}")
-            del pose_dict[key]# 取出这一pose后从dict中删除
-            '''选取完整度2/3分位的pose进行inpaint 处理既可能不完整但是不是最困难的pose'''
+            del pose_dict[key]
 
             # rendering rgb depth mask
-            pano_rgb, pano_distance, pano_mask = self.render_pano(pose.cuda())# 渲染出此时视图
+            pano_rgb, pano_distance, pano_mask = self.render_pano(pose.cuda())
 
             # inpaint pano
-            colors = pano_rgb.permute(1,2,0).clone()
+            colors = pano_rgb.permute(1,2,0).clone() # HWC
             distances = pano_distance.unsqueeze(-1).clone()
             pano_inpaint_mask = pano_mask.clone()
-            '''
-            print("colors shape:", colors.shape)
-            print("labels shape:", labels.shape)
-            print("distances shape:", distances.shape)
-            print("distances.squeeze(2) shape:", distances.squeeze(2).shape)
-            '''
-            '''inpainting过程'''
 
-#            if pano_inpaint_mask.min().item() < .5:# 如果存在需要补全的部分
+            if pano_inpaint_mask.min().item() < .5:
                 # inpainting pano
-            colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances.squeeze(2), pano_mask=pano_inpaint_mask)# HWC, HWC, HW
-            # labels = torch.zeros((1, colors.shape[1]), dtype=torch.float)
-            # colors = torch.cat([colors, labels], dim = 0)
-            '''inpainting过程'''
-
-            # apply_GeoCheck:
-            perf_pose = pose.clone().type(torch.float)
-            perf_pose[0,3], perf_pose[1,3], perf_pose[2,3] = -pose[0,3], pose[2,3], 0 
-            # self.pano_width=torch.tensor(self.pano_width,dtype=torch.float32)
-            # self.pano_height=torch.tensor(self.pano_height,dtype=torch.float32)
-            rays = gen_pano_rays(perf_pose.cuda(), self.pano_height, self.pano_width)
-            # rays = gen_pano_rays(perf_pose.cuda(), self.pano_height.cuda(), self.pano_width.cuda())
-            conflict_mask = self.sup_pool.geo_check(rays, distances.unsqueeze(-1))# 0 conflict, 1 not conflict
-            pano_inpaint_mask = pano_inpaint_mask * conflict_mask 
-            
+                colors, distances, normals = self.inpaint_new_panorama(idx=key, colors=colors, distances=distances, pano_mask=pano_inpaint_mask) # HWC, HWC, HW
+                
+                #apply_GeoCheck:
+                perf_pose = pose.clone()
+                perf_pose[0,3], perf_pose[1,3], perf_pose[2,3] = -pose[0,3], pose[2,3], 0 
+                rays = gen_pano_rays(perf_pose, self.pano_height, self.pano_width)
+                conflict_mask = self.sup_pool.geo_check(rays, distances.unsqueeze(-1))    # 0 conflict, 1 not conflict
+                pano_inpaint_mask = pano_inpaint_mask * conflict_mask # 没有冲突的地方被标记为需要修复的地方，有冲突的地方略过
+                    
             # add new mesh
-            self.pano_distance_to_mesh(colors.permute(2,0,1), distances.squeeze(1), pano_inpaint_mask, pose=pose)# CHW, HW, HW
-            # self.pano_distance_to_mesh(colors.permute(2,0,1), distances.squeeze(2), pano_inpaint_mask, pose=pose)# CHW, HW, HW
-            # self.pano_distance_to_mesh(labels.permute(2,0,1), distances.squeeze(1), pano_inpaint_mask, pose=pose, pseudo=True)# CHW, HW, HW
-            # self.pano_distance_to_mesh(labels.permute(2,0,1), distances.squeeze(2), pano_inpaint_mask, pose=pose, pseudo=True)# CHW, HW, HW
+            self.pano_distance_to_mesh(colors.permute(2,0,1), distances, pano_inpaint_mask, pose=pose) #CHW, HW, HW
 
             # apply_GeoCheck:
             sup_mask = pano_inpaint_mask.clone()
-            self.sup_pool.register_sup_info(pose=perf_pose.cuda(), mask=sup_mask.cuda(), rgb=colors.cuda(), distance=distances.unsqueeze(-1), normal=normals)
+            self.sup_pool.register_sup_info(pose=perf_pose, mask=sup_mask, rgb=colors, distance=distances.unsqueeze(-1), normal=normals)
             
             # save renderred
             self.namer += 1
@@ -851,7 +830,7 @@ class Pano2RoomPipeline(torch.nn.Module):
     
     def completeness(self, pose_dict):
         
-        threshold = 0.9
+        threshold = 0.95
         poses = []
         for pose in pose_dict.values():
             _, _, pano_mask = self.render_pano(pose)
@@ -859,8 +838,10 @@ class Pano2RoomPipeline(torch.nn.Module):
             print("view_completeness: ",view_completeness.item())
             if view_completeness.item() > threshold:
                 poses.append(pose)
-                
-        return random.choice(poses) # torch.tensor [4, 4]
+        if len(poses):
+            return random.choice(poses)
+        return None
+     # torch.tensor [4, 4]
 
 
     def pano_segment(self, pano_tensor):
@@ -952,12 +933,17 @@ class Pano2RoomPipeline(torch.nn.Module):
             mask = cam_to_obj_dis > obj_size
             if mask.any():
                 # print("no cameras!", id)
-                idx = torch.argmin(cam_to_obj_dis[mask])
-                idx = torch.nonzero(mask)[idx][0]
-                # main_select_position = camera_positions[idx]
-                # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
-                poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx], size = obj_size, pose_select_num = 3, circle_num = 3)
-                pose_dict[id] = self.completeness(poses)
+                poses, indices = torch.topk(cam_to_obj_dis[mask], 3)
+                pose = None
+                indices = torch.nonzero(mask)[indices]
+                for idx in indices:
+                    # main_select_position = camera_positions[idx]
+                    # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
+                    poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx], size = obj_size, pose_select_num = 3, circle_num = 3)
+                    pose = self.completeness(poses)
+                    if pose is not None:
+                        pose_dict[id] = pose
+                        break
         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
 
