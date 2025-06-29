@@ -356,7 +356,7 @@ class Segmentor(object):
         os.makedirs("output/20250312193327/seg/pers", exist_ok= True)
         os.makedirs("output/20250312193327/seg/segpers", exist_ok= True)
         print('加载透视图……')
-        for i, pose in enumerate(poses[:2]):
+        for i, pose in enumerate(poses[:]):
             images.append(equi2pers(pano, pose, fov, H, W))
             Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
 
