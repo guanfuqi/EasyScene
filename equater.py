@@ -788,7 +788,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                 cam = center + rho * math.cos(theta) * x + rho * math.sin(theta) * y
                 R = look_at(to_vec = (obj - cam)) # 33
                 T = cam.unsqueeze(1)
-                pose = torch.cat([R, T], dim = -1)
+                pose = torch.cat([R.T, -R.T @ T], dim = -1)
                 pose44 = torch.cat([pose, torch.tensor([[0.,0.,0.,1.]])], dim = 0)
                 assert pose44.shape == (4,4)
                 object_poses_dict[key] = pose44.clone()
@@ -813,7 +813,7 @@ class Pano2RoomPipeline(torch.nn.Module):
     
     def completeness(self, pose_dict):
         
-        threshold = 0.95
+        threshold = 0.9
         poses = []
         for pose in pose_dict.values():
             _, _, pano_mask = self.render_pano(pose)
@@ -930,25 +930,26 @@ class Pano2RoomPipeline(torch.nn.Module):
                     pose = self.completeness(poses)
                     if pose is not None:
                         eye = torch.eye(4).float().cuda()
-                        eye[:3, 3] = pose[:3, 3] * (-1)
+                        eye[:3, 3] = pose[:3, 3]
                         pose_dict[id] = eye
+                        print(f"Found pose for id: {id}: {self.class_names[self.segmentor.id2type[id]]}")
                         break
         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
 
         # Global Completion
-        pose_dict = {}
-        cam_cnt = len(camera_positions)
+        # pose_dict = {}
+        # cam_cnt = len(camera_positions)
 
-        for key in range(0, cam_cnt, 3):
-            to_vec = torch.tensor([-camera_positions[key][0].item(), 0., -camera_positions[key][2].item()])
-            R = look_at(to_vec)
-            T = camera_positions[key].unsqueeze(1)
-            pose = torch.cat([R, T], dim = -1)
-            pose44 = torch.cat([pose, torch.tensor([[0.,0.,0.,1.]])], dim = 0)
-            assert pose44.shape == (4,4)
-            pose_dict[key] = pose44
-        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
+        # for key in range(0, cam_cnt, 3):
+        #     to_vec = torch.tensor([-camera_positions[key][0].item(), 0., -camera_positions[key][2].item()])
+        #     R = look_at(to_vec)
+        #     T = camera_positions[key].unsqueeze(1)
+        #     pose = torch.cat([R, T], dim = -1)
+        #     pose44 = torch.cat([pose, torch.tensor([[0.,0.,0.,1.]])], dim = 0)
+        #     assert pose44.shape == (4,4)
+        #     pose_dict[key] = pose44
+        # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
         # self.poses.extend(list(pose_dict.values()))
 
 

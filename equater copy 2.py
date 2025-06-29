@@ -461,7 +461,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                 perf_pose[0,3], perf_pose[1,3], perf_pose[2,3] = -pose[0,3], pose[2,3], 0 
                 rays = gen_pano_rays(perf_pose, self.pano_height, self.pano_width)
                 conflict_mask = self.sup_pool.geo_check(rays, distances.unsqueeze(-1))    # 0 conflict, 1 not conflict
-                pano_inpaint_mask = pano_inpaint_mask * conflict_mask # 没有冲突的地方被标记为需要修复的地方，有冲突的地方略过
+                pano_inpaint_mask = pano_inpaint_mask # 没有冲突的地方被标记为需要修复的地方，有冲突的地方略过
                     
             # add new mesh
             self.pano_distance_to_mesh(colors.permute(2,0,1), distances, pano_inpaint_mask, pose=pose) #CHW, HW, HW
@@ -830,7 +830,7 @@ class Pano2RoomPipeline(torch.nn.Module):
     
     def completeness(self, pose_dict):
         
-        threshold = 0.9
+        threshold = 0.95
         poses = []
         for pose in pose_dict.values():
             _, _, pano_mask = self.render_pano(pose)
@@ -838,8 +838,10 @@ class Pano2RoomPipeline(torch.nn.Module):
             print("view_completeness: ",view_completeness.item())
             if view_completeness.item() > threshold:
                 poses.append(pose)
-                
-        return random.choice(poses) # torch.tensor [4, 4]
+        if len(poses):
+            return random.choice(poses)
+        return None
+     # torch.tensor [4, 4]
 
 
     def pano_segment(self, pano_tensor):
@@ -919,25 +921,30 @@ class Pano2RoomPipeline(torch.nn.Module):
         object_centers = {}
         pose_dict = {}
         inpainted_panos_and_poses = []
-        # for id in tqdm(range(obj_cnt)):
-        #     if self.segmentor.id2type[id] == environment_label:
-        #         continue
-        #     object_vertice = self.find_object(id).T # [N, 3]
-        #     obj_size = self.size_factor * object_vertice.std(dim = 0).norm() # tesnor 标量
-        #     self.size.append(obj_size)
-        #     object_centers[id] = object_vertice.mean(dim = 0) # dict(idx: [3,])
-        #     cam_to_obj_vec: torch.Tensor = object_centers[id] - camera_positions # [N, 3]
-        #     cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) # [n,]
-        #     mask = cam_to_obj_dis > obj_size
-        #     if mask.any():
-        #         # print("no cameras!", id)
-        #         idx = torch.argmin(cam_to_obj_dis[mask])
-        #         idx = torch.nonzero(mask)[idx][0]
-        #         # main_select_position = camera_positions[idx]
-        #         # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
-        #         poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx], size = obj_size, pose_select_num = 3, circle_num = 3)
-        #         pose_dict[id] = self.completeness(poses)
-        # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
+        for id in tqdm(range(obj_cnt)):
+            if self.segmentor.id2type[id] == environment_label:
+                continue
+            object_vertice = self.find_object(id).T # [N, 3]
+            obj_size = self.size_factor * object_vertice.std(dim = 0).norm() # tesnor 标量
+            self.size.append(obj_size)
+            object_centers[id] = object_vertice.mean(dim = 0) # dict(idx: [3,])
+            cam_to_obj_vec: torch.Tensor = object_centers[id] - camera_positions # [N, 3]
+            cam_to_obj_dis = cam_to_obj_vec.norm(dim = 1) # [n,]
+            mask = cam_to_obj_dis > obj_size
+            if mask.any():
+                # print("no cameras!", id)
+                __, indices = torch.topk(cam_to_obj_dis[mask], 3)
+                pose = None
+                indices = torch.nonzero(mask)[indices]
+                for idx in indices:
+                    # main_select_position = camera_positions[idx]
+                    # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
+                    poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx.item()], size = obj_size, pose_select_num = 3, circle_num = 3)
+                    pose = self.completeness(poses)
+                    if pose is not None:
+                        pose_dict[id] = pose
+                        break
+        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
 
         # Global Completion
