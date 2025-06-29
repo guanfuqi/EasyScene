@@ -166,7 +166,7 @@ def equi2pers(pano, pose, fovx, H, W):
     return pers_img
 
 
-def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
+def pers2equi(poses, fov, H, W, images, pano_h, pano_w, default_label = -1):
     """
     透视标签图拼接成全景图
     :param poses: np.ndarray [b,3,4]
@@ -189,7 +189,7 @@ def pers2equi(poses, fov, H, W, images, pano_h, pano_w):
         [0, 0, 1]
     ], dtype = np.float32)
 
-    out = -1 *  np.ones((pano_h, pano_w), dtype=np.int32)
+    out = default_label *  np.ones((pano_h, pano_w), dtype=np.int32)
 
     px, py = np.meshgrid(np.arange(pano_w), np.arange(pano_h))
     theta, phi = px / pano_w * 2 * np.pi - np.pi, py / pano_h * np.pi - np.pi / 2
@@ -300,7 +300,7 @@ class Segmentor(object):
 
         for image in tqdm(images):
             anns = self.masks_generator.generate(image)
-            result = -1 * self.class_cnt * np.zeros((image.shape[0],image.shape[1]), dtype = np.int32)
+            result = self.class_cnt * np.ones((image.shape[0],image.shape[1]), dtype = np.int32)
             for i, ann in enumerate(anns):
                 mask = ann['segmentation']
                 image_new = image.copy()
@@ -364,9 +364,9 @@ class Segmentor(object):
         segmented_images = self.segment(images)
 
         print('映射回全景图……')
-        out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1]) # tensor
+        out = pers2equi(poses, fov, H, W, segmented_images, pano.shape[0], pano.shape[1], default_label = self.class_cnt) # tensor
 
-        return torch.from_numpy(out).to(torch.float32).cuda()
+        return out
 
 
 if __name__ == "__main__":
