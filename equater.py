@@ -814,7 +814,7 @@ class Pano2RoomPipeline(torch.nn.Module):
     
     def completeness(self, pose_dict):
         
-        threshold = 0.9
+        threshold = 0.8
         poses = []
         for pose in pose_dict.values():
             _, _, pano_mask = self.render_pano(pose)
