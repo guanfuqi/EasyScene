@@ -790,7 +790,6 @@ class Pano2RoomPipeline(torch.nn.Module):
                 T = cam.unsqueeze(1)
                 pose = torch.cat([R, T], dim = -1)
                 pose44 = torch.cat([pose, torch.tensor([[0.,0.,0.,1.]])], dim = 0)
-                pose44[:3, 3] *= -1
                 assert pose44.shape == (4,4)
                 object_poses_dict[key] = pose44.clone()
                 key += 1
@@ -930,7 +929,9 @@ class Pano2RoomPipeline(torch.nn.Module):
                     poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx.item()], size = obj_size, pose_select_num = 3, circle_num = 3)
                     pose = self.completeness(poses)
                     if pose is not None:
-                        pose_dict[id] = pose
+                        eye = torch.eye(4).float().cuda()
+                        eye[:3, 3] = pose[:3, 3] * (-1)
+                        pose_dict[id] = eye
                         break
         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 

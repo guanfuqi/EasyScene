@@ -375,8 +375,23 @@ if __name__ == "__main__":
     scenegraph = SceneGraph(exist = True, exist_path = "output/20250312193327")
     class_names = scenegraph.extract_objects_names()
     
-    pano_path = "input/pano.png"
+    pano_path = "output\\Pano2Room-results\\renderred_pano_2.png"
     pano_pil = Image.open(pano_path)
     pano:torch.tensor = torch.tensor(np.array(pano_pil))[..., :3].permute(2,0,1).float()/255 #3HW
-    segmentor = Segmentor(H = 512, W = 512, fovx = 90, class_names = class_names)
-    segmentor.segment_pano(pano)
+    # segmentor = Segmentor(H = 512, W = 512, fovx = 90, class_names = class_names)
+    # segmentor.segment_pano(pano)
+
+    poses = get_cubemap_views_world_to_cam()
+    poses = [pose[:3].cpu().numpy() for pose in poses]
+    fov = 90
+    H, W = 512, 512
+
+    images = []
+    pano = (pano.permute(1, 2, 0).detach().cpu().numpy()[..., :3] * 255).astype(np.uint8)
+
+    os.makedirs("output/20250312193327/seg/pers", exist_ok= True)
+    os.makedirs("output/20250312193327/seg/segpers", exist_ok= True)
+    print('加载透视图……')
+    for i, pose in enumerate(poses[:]):
+        images.append(equi2pers(pano, pose, fov, H, W))
+        Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
