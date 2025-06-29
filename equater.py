@@ -808,6 +808,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
             select_position[idx] = view_completeness
         sorted_selected_position = sorted(select_position.items(), key=lambda item: item[1], reverse=True)
+        torch.cuda.empty_cache() 
         return poses[sorted_selected_position[0][0]][:3,3]
 
     
@@ -866,7 +867,8 @@ class Pano2RoomPipeline(torch.nn.Module):
             image = image.transpose(Image.TRANSPOSE)
         image = functions.resize_image_with_aspect_ratio(image, new_width=self.pano_width)
         panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
-        panorama_label, obj_cnt, environment_label = self.pano_segment(panorama_tensor)
+        with torch.no_grad():
+            panorama_label, obj_cnt, environment_label = self.pano_segment(panorama_tensor)
 
         self.panorama_label = panorama_label
 
@@ -875,9 +877,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         panorama_rgb, panorama_depth = panorama_rgb.cuda(), panorama_depth.cuda() # [C, H, W], [H, W]
 
         self.pts = unproject_points_distance(panorama_depth.cpu()).reshape(panorama_depth.shape[0], panorama_depth.shape[1], 3)
-        test = 1
-        if test:
-            print("pts.shape: ", self.pts.shape)
+        torch.cuda.empty_cache()
+
         # Load Initial Depth_Edge & Depth_Edge_Inpainted_Mask
         depth_edge = self.find_depth_edge(panorama_depth.cpu().detach().numpy(), dilate_iter=1)
         depth_edge_inpaint_mask = ~(torch.from_numpy(depth_edge).cuda().bool())# 反转edge_mask：inpainting过程中边缘不动
@@ -897,9 +898,7 @@ class Pano2RoomPipeline(torch.nn.Module):
 
 
         # Pano2Mesh
-        # panorama_label = torch.stack([panorama_label, torch.zeros_like(panorama_label), torch.zeros_like(panorama_label)], dim = 0)
         self.pano_distance_to_mesh(panorama_rgb, panorama_depth, depth_edge_inpaint_mask)
-        # self.pano_distance_to_mesh(panorama_label, panorama_depth, depth_edge_inpaint_mask, pseudo = True)
 
         # Objects Inpainting
         self.pose_sampler = CirclePoseSampler(panorama_depth, **self.pose_sampler_conf)
@@ -920,7 +919,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             mask = cam_to_obj_dis > obj_size.item()
             if mask.any():
                 # print("no cameras!", id)
-                __, indices = torch.topk(cam_to_obj_dis[mask], 3, largest=False)
+                __, indices = torch.topk(cam_to_obj_dis[mask], 1, largest=False)
                 pose = None
                 indices = torch.nonzero(mask)[indices]
                 for idx in indices:
@@ -933,9 +932,10 @@ class Pano2RoomPipeline(torch.nn.Module):
                         eye[:3, 3] = pose[:3, 3]
                         pose_dict[id] = eye
                         print(f"Found pose for id: {id}: {self.class_names[self.segmentor.id2type[id]]}")
-                        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search({1:eye}))
+                        # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search({1:eye}))
                         break
-        # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
+        torch.cuda.empty_cache()
+        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
 
         # Global Completion
