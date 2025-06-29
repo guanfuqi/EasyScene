@@ -920,7 +920,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             mask = cam_to_obj_dis > obj_size.item()
             if mask.any():
                 # print("no cameras!", id)
-                __, indices = torch.topk(cam_to_obj_dis[mask], 3)
+                __, indices = torch.topk(cam_to_obj_dis[mask], 3, largest=False)
                 pose = None
                 indices = torch.nonzero(mask)[indices]
                 for idx in indices:
@@ -933,8 +933,9 @@ class Pano2RoomPipeline(torch.nn.Module):
                         eye[:3, 3] = pose[:3, 3]
                         pose_dict[id] = eye
                         print(f"Found pose for id: {id}: {self.class_names[self.segmentor.id2type[id]]}")
+                        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search({1:eye}))
                         break
-        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
+        # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
 
         # Global Completion
