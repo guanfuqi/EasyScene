@@ -48,86 +48,6 @@ warnings.filterwarnings("ignore")
 import random
 
 
-'''
-STRUCTURE
-
-__init__
-    initialize models and define shared variables
-load_modules()
-    在__init__函数中调用 加载两个模型inpainter, geo_predictor
-project()
-    mesh_to_perspective
-    using render_mesh
-    INPUT:world_to_perspective_camera_pose OUTPUT:rendered_image_tensor, rendered_image_pil
-render_pano(self, pose):
-    mesh_to_cubemap_to_panorama
-    using project(), depth_to_distance(), cube2equi()
-    INPUT:world_to_panorama_camera_pose OUTPUT:pano_rgb, pano_depth, pano_mask
-rgbd_to_mesh()
-    RGBD_to_mesh
-    using features_to_world_space_mesh()
-    INPUT:RGBD OUTPUT:None
-    mesh iteration
-find_depth_edge()
-    depth_to_EdgeMask
-    usingcv2.canny()
-    INPUT:depth OUTPUT:EdgeMask
-pano_distance_to_mesh()
-    panoramaRGBD_to_mesh
-    using rgbd_to_mesh
-    INPUT:panoramaRGBD OUTPUT:None
-    mesh iteration
-load_inpaint_pose()
-    create panorama_pose, pose
-    using nothing
-    INPUT:None OUTPUT:panorama_pose(NDArray), pose(list)
-stage_inpaint_pano_greedy_search()
-    选取完整度处于2/3分位的pose进行inpainting 完成mesh_iteration并且收集pseudo_view
-    using render_pano(), inpaint_new_panorama(), geo_check(), pano_distance_to_mesh()
-    INPUT:pose_dict OUTPUT:inpainted_panos_and_poses(list)
-inpaint_new_panorama()
-    inpainting
-    using cv2.getStructuringElement(), inpainter.inpaint(), geo_predictor()
-    INPUT:idx, RGBD, mask OUTPUT:inpainted_img, inpainted_distances, inpainted_normals
-load_pano()
-    加载panorama_init
-    using resize_image_with_aspect_ratio(), pano_fusion_distance_predictor.predict()
-    INPUT:Null OUTPUT:panorama_tensor, depth
-load_camera_poses()
-    create inpainted_poses_dict
-    using nothing
-    INPUT:None OUTPUT:pose_dict
-pano_to_perpective()
-    panorama_to_perspective
-    using equi2pers()
-    INPUT:panorama, pitch, yaw, fov OUTPUT:perspective
-pano_to_cubemap()
-    panorama_to_cubemap
-    using pano_to_perspective()
-    INPUT:panorama OUTPUT:cubemap, cubelap_depth
-train_GS()
-eval_GS()
-find_object()
-    find_object_in_vertices_tensor_given_segment_label
-    using None
-    INPUT:label OUTPUT:start, end
-look_at()
-    get_certain_camera_posse
-    using None
-    INPUT:obj, cam OUTPUT:R_44
-load_object_poses()
-    load_camera_a_series_ofposes_surrounding_certain_object
-    using look_at()
-    INPUT:obj_posi, main_cam_posi, obj_size OUTPUT:camera_poses_dict
-object_inpaint()
-    get_object_inpainted_poses_and_inpaint_and_iterate_mesh
-    using stage_inpaint_pano_greedy_search()
-    INPUT:label, world OUTPUT:object_inpainted_panos_and_poses
-run()
-    A COMPLETE PIPELINE
-'''
-
-
 def look_at(to_vec, up_vec = None):
     to_vec /= to_vec.norm(dim = -1)
     if up_vec == None:
@@ -196,12 +116,12 @@ class Pano2RoomPipeline(torch.nn.Module):
 
         # init segmentor
         self.class_names = self.scene_graph.extract_objects_names()
-        self.segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
+        # self.segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
 
         self.prompts = []
         self.pidx = []
         self.size = []
-        self.size_factor = 1.5
+        self.size_factor = 1.0
 
         # circle_sampler parameters
         self.pose_sampler_conf = {
@@ -861,20 +781,24 @@ class Pano2RoomPipeline(torch.nn.Module):
         # torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
         # Load Segmentation
+        segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
         image_path = f"input/pano.png"
         image = Image.open(image_path)
         if image.size[0] < image.size[1]: # size[0]表示图像的宽，size[1]表示图像的高
             image = image.transpose(Image.TRANSPOSE)
         image = functions.resize_image_with_aspect_ratio(image, new_width=self.pano_width)
-        panorama_tensor = torch.tensor(np.array(image))[...,:3].permute(2,0,1).float()/255
+        pano_numpy = np.array(image)
         with torch.no_grad():
-            panorama_label, obj_cnt, environment_label = self.pano_segment(panorama_tensor)
+            self.panorama_label = segmentor.segment_pano(pano_numpy)
+            obj_cnt = segmentor.tot
+            environment_label = segmentor.class_cnt
 
-        self.panorama_label = panorama_label
 
         # Load Initial RGB, Depth, Label Tensor
         panorama_rgb, panorama_depth = self.load_pano() # [C, H, W]
         panorama_rgb, panorama_depth = panorama_rgb.cuda(), panorama_depth.cuda() # [C, H, W], [H, W]
+
+        segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
 
         self.pts = unproject_points_distance(panorama_depth.cpu()).reshape(panorama_depth.shape[0], panorama_depth.shape[1], 3)
         torch.cuda.empty_cache()
@@ -908,7 +832,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         pose_dict = {}
         inpainted_panos_and_poses = []
         for id in tqdm(range(obj_cnt)):
-            if self.segmentor.id2type[id] == environment_label:
+            if segmentor.id2type[id] == environment_label:
                 continue
             object_vertice = self.find_object(id) # [N, 3]
             obj_size = self.size_factor * np.linalg.norm(object_vertice.std(axis = 0)) # tesnor 标量
@@ -927,15 +851,16 @@ class Pano2RoomPipeline(torch.nn.Module):
                     # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
                     poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx.item()], size = obj_size, pose_select_num = 3, circle_num = 3)
                     pose = self.completeness(poses)
+                    torch.cuda.empty_cache()
                     if pose is not None:
                         eye = torch.eye(4).float().cuda()
                         eye[:3, 3] = pose[:3, 3]
                         pose_dict[id] = eye
-                        print(f"Found pose for id: {id}: {self.class_names[self.segmentor.id2type[id]]}")
-                        # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search({1:eye}))
+                        print(f"Found pose for id: {id}: {self.class_names[segmentor.id2type[id]]}")
+                        torch.cuda.empty_cache()
+                        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search({1:eye}))
                         break
-        torch.cuda.empty_cache()
-        inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
+        # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
 
         # Global Completion

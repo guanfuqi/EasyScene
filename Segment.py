@@ -340,7 +340,7 @@ class Segmentor(object):
 
     def segment_pano(self, pano):
         '''
-        :pano: tensor[3,H,W]
+        :pano: numpy[H, W, 3]
         :class_names: List[n]
         :return: tensor[H,W]
         '''
@@ -351,12 +351,11 @@ class Segmentor(object):
         H, W = self.H, self.W
 
         images = []
-        pano = (pano.permute(1, 2, 0).detach().cpu().numpy()[..., :3] * 255).astype(np.uint8)
 
         os.makedirs("output/20250312193327/seg/pers", exist_ok= True)
         os.makedirs("output/20250312193327/seg/segpers", exist_ok= True)
         print('加载透视图……')
-        for i, pose in enumerate(poses[:2]):
+        for i, pose in enumerate(poses[:]):
             images.append(equi2pers(pano, pose, fov, H, W))
             Image.fromarray(images[i]).save(f'output/20250312193327/seg/pers/{i}.jpg')
 
