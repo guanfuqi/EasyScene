@@ -95,7 +95,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             timestamp = str(int(time.time()))[-8:]
             self.setting += f"-{timestamp}"
         self.save_path = f'output/Pano2Room-results'
-        self.save_details = False
+        self.save_details = True
 
         if not os.path.exists(self.save_path):
             os.makedirs(self.save_path)
@@ -518,6 +518,40 @@ class Pano2RoomPipeline(torch.nn.Module):
             '''relative:以第一个位姿pano_pose_44为基准 计算其他位姿的相对值 相当于形成了w2c'''
 
         return pano_pose_44, poses
+    
+    def load_camera_for_mesh_render(self):
+        subset_path = f'input/Camera_Trajectory'# initial 6 poses are cubemaps poses
+        files = os.listdir(subset_path)
+
+ #       self.scene_depth_max = 4.0228885328450446
+
+        pano_pose_44 = None
+        pose_files = [f for f in files if f.startswith('camera_pose')]
+        pose_files = sorted(pose_files)
+        poses_name = pose_files
+        poses = []
+        for i, pose_name in enumerate(poses_name):
+            with open(f'{subset_path}/{pose_name}', 'r') as f: 
+                lines = f.readlines()
+            pose_44 = []
+            for line in lines:
+                pose_44 += line.split()
+            pose_44 = np.array(pose_44).reshape(4, 4).astype(float)
+
+            pose_relative_44 = pose_44
+
+            pose_relative_44 = np.vstack((-pose_relative_44[0:1,:], -pose_relative_44[1:2,:], pose_relative_44[2:3,:], pose_relative_44[3:4,:]))
+            pose_relative_44 = pose_relative_44 @ rot_z_world_to_cam(180).cpu().numpy()
+
+            pose_relative_44[:3,3] *= self.pose_scale
+            poses += [torch.tensor(pose_relative_44).float()]# w2c
+        return poses
+    
+    def render_mesh_with_poses(self, poses:list):
+        # pose world_to_cam44
+        for i, wold_to_cam in enumerate(poses):
+            __, render_pil = self.project(wold_to_cam)
+            render_pil.save(os.path.join(self.save_path, f"renderred_mesh_{i}.png"))
 
 
 
@@ -856,7 +890,7 @@ class Pano2RoomPipeline(torch.nn.Module):
                     torch.cuda.empty_cache()
                     if pose is not None:
                         eye = torch.eye(4).float().cuda()
-                        cam_pos = - pose[:3,:3] @ pose[:3, 3:]
+                        cam_pos =  pose[:3,:3] @ pose[:3, 3:]
                         eye[:3, 3:] = cam_pos
                         pose_dict[id] = eye
                         print(f"Found pose for id: {id}: {self.class_names[segmentor.id2type[id]]}")
@@ -865,6 +899,10 @@ class Pano2RoomPipeline(torch.nn.Module):
                         break
         # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
 
+        # 从mesh里渲染透视图，这将用来和3DGS的视图配对，计算相似值，
+        poses_for_mesh = self.load_camera_for_mesh_render()
+        self.render_mesh_with_poses(poses= poses_for_mesh)
+        torch.cuda.empty_cache()
 
         # Global Completion
         # pose_dict = {}
