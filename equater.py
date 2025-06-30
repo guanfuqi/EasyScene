@@ -736,12 +736,16 @@ class Pano2RoomPipeline(torch.nn.Module):
         
         threshold = 0.8
         poses = []
+        k = 0
         for pose in pose_dict.values():
-            _, _, pano_mask = self.render_pano(pose)
+            pano_rgb, _, pano_mask = self.render_pano(pose)
             view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
             print("view_completeness: ",view_completeness.item())
             if view_completeness.item() > threshold:
                 poses.append(pose)
+                panorama_tensor_pil = functions.tensor_to_pil(pano_rgb.unsqueeze(0))
+                panorama_tensor_pil.save(f"test/renderred_pano_{k}.png")
+                k += 1
         if len(poses):
             return random.choice(poses)
         return None
@@ -797,8 +801,6 @@ class Pano2RoomPipeline(torch.nn.Module):
         # Load Initial RGB, Depth, Label Tensor
         panorama_rgb, panorama_depth = self.load_pano() # [C, H, W]
         panorama_rgb, panorama_depth = panorama_rgb.cuda(), panorama_depth.cuda() # [C, H, W], [H, W]
-
-        segmentor = Segmentor(self.H, self.W, self.fov, self.class_names)
 
         self.pts = unproject_points_distance(panorama_depth.cpu()).reshape(panorama_depth.shape[0], panorama_depth.shape[1], 3)
         torch.cuda.empty_cache()
