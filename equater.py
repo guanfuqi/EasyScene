@@ -770,7 +770,6 @@ class Pano2RoomPipeline(torch.nn.Module):
         
         threshold = 0.87
         poses = []
-        k = 0
         for pose in pose_dict.values():
             pano_rgb, _, pano_mask = self.render_pano(pose)
             view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
@@ -778,8 +777,6 @@ class Pano2RoomPipeline(torch.nn.Module):
             if view_completeness.item() > threshold:
                 poses.append(pose)
                 panorama_tensor_pil = functions.tensor_to_pil(pano_rgb.unsqueeze(0))
-                panorama_tensor_pil.save(f"test/renderred_pano__{id}_{k}.png")
-                k += 1
         if len(poses):
             return random.choice(poses)
         return None
