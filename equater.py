@@ -96,6 +96,10 @@ class Pano2RoomPipeline(torch.nn.Module):
             self.setting += f"-{timestamp}"
         self.save_path = f'output/Pano2Room-results'
         self.save_details = True
+        self.renderred_mesh_path = f"output/Pano2Room-results/renderred_mesh"
+        self.renderred_GS_path = f"output/Pano2Room-results/renderred_GS"
+        os.makedirs(self.renderred_mesh_path, exist_ok= True)
+        os.makedirs(self.renderred_GS_path, exist_ok= True)
 
         if not os.path.exists(self.save_path):
             os.makedirs(self.save_path)
@@ -508,7 +512,6 @@ class Pano2RoomPipeline(torch.nn.Module):
             else:
                 ### convert gt_pose to gt_relative_pose with pano_pose
                 pose_relative_44 = pose_44 @ np.linalg.inv(pano_pose_44)
-            '''对前六个cubemap 不作平移处理'''
 
             pose_relative_44 = np.vstack((-pose_relative_44[0:1,:], -pose_relative_44[1:2,:], pose_relative_44[2:3,:], pose_relative_44[3:4,:]))
             pose_relative_44 = pose_relative_44 @ rot_z_world_to_cam(180).cpu().numpy()
@@ -549,9 +552,11 @@ class Pano2RoomPipeline(torch.nn.Module):
     
     def render_mesh_with_poses(self, poses:list):
         # pose world_to_cam44
-        for i, wold_to_cam in enumerate(poses):
-            __, render_pil = self.project(wold_to_cam)
-            render_pil.save(os.path.join(self.save_path, f"renderred_mesh_{i}.png"))
+        for i, world_to_cam in enumerate(poses):
+            world_to_cam[0:1, :] *= -1
+            world_to_cam[1:2, :] *= -1
+            __, render_pil = self.project(world_to_cam)
+            render_pil.save(os.path.join(self.renderred_mesh_path, f"{i}.png"))
 
 
 
@@ -682,7 +687,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         if self.save_details:
             for i, frame in enumerate(framelist):
                 image = Image.fromarray(frame, mode="RGB")
-                image.save(os.path.join(self.save_path, f"Eval_render_rgb_{i}.png"))
+                image.save(os.path.join(self.renderred_GS_path, f"{i}.png"))
                 # functions.write_image(f"{self.save_path}/Eval_render_depth_{i}.png", depthlist[i])
         
         write_video(f"{self.save_path}/GS_render_video.mp4", framelist[6:], fps=30)
