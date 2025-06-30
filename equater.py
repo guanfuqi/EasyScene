@@ -121,7 +121,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         self.prompts = []
         self.pidx = []
         self.size = []
-        self.size_factor = 1.0
+        self.size_factor = 1.5
 
         # circle_sampler parameters
         self.pose_sampler_conf = {
@@ -379,13 +379,13 @@ class Pano2RoomPipeline(torch.nn.Module):
             self.namer += 1
             panorama_tensor_pil = functions.tensor_to_pil(pano_rgb.unsqueeze(0))
             panorama_tensor_pil.save(f"{self.save_path}/renderred_pano_{self.namer}.png")
-            if self.save_details:
-                depth_pil = Image.fromarray(colorize_single_channel_image(pano_distance.unsqueeze(0)/self.scene_depth_max))
-                depth_pil.save(f"{self.save_path}/renderred_depth_{self.namer}.png")        
-                inpaint_mask_pil = Image.fromarray(pano_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
-                inpaint_mask_pil.save(f"{self.save_path}/mask_{self.namer}.png")  
-                inpaint_mask_pil = Image.fromarray(pano_inpaint_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
-                inpaint_mask_pil.save(f"{self.save_path}/inpaint_mask_{self.namer}.png")  
+            # if self.save_details:
+            #     depth_pil = Image.fromarray(colorize_single_channel_image(pano_distance.unsqueeze(0)/self.scene_depth_max))
+            #     depth_pil.save(f"{self.save_path}/renderred_depth_{self.namer}.png")        
+            #     inpaint_mask_pil = Image.fromarray(pano_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
+            #     inpaint_mask_pil.save(f"{self.save_path}/mask_{self.namer}.png")  
+            #     inpaint_mask_pil = Image.fromarray(pano_inpaint_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
+            #     inpaint_mask_pil.save(f"{self.save_path}/inpaint_mask_{self.namer}.png")  
 
             # save inpainted
             panorama_tensor_pil = functions.tensor_to_pil(colors.permute(2,0,1).unsqueeze(0))
@@ -633,10 +633,10 @@ class Pano2RoomPipeline(torch.nn.Module):
             loss = (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(render_image, gt_image))
             loss.backward()
 
-            if self.save_details:
-                if iteration % 200 == 0:
-                    functions.write_image(f"{self.save_path}/Train_Ref_rgb_{iteration}.png", gt_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
-                    functions.write_image(f"{self.save_path}/Train_GS_rgb_{iteration}.png", render_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
+            # if self.save_details:
+            #     if iteration % 200 == 0:
+            #         functions.write_image(f"{self.save_path}/Train_Ref_rgb_{iteration}.png", gt_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
+            #         functions.write_image(f"{self.save_path}/Train_GS_rgb_{iteration}.png", render_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
 
             with torch.no_grad():
                 # Densification
@@ -683,7 +683,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             for i, frame in enumerate(framelist):
                 image = Image.fromarray(frame, mode="RGB")
                 image.save(os.path.join(self.save_path, f"Eval_render_rgb_{i}.png"))
-                functions.write_image(f"{self.save_path}/Eval_render_depth_{i}.png", depthlist[i])
+                # functions.write_image(f"{self.save_path}/Eval_render_depth_{i}.png", depthlist[i])
         
         write_video(f"{self.save_path}/GS_render_video.mp4", framelist[6:], fps=30)
         write_video(f"{self.save_path}/GS_depth_video.mp4", depthlist[6:], fps=30)
@@ -766,9 +766,9 @@ class Pano2RoomPipeline(torch.nn.Module):
         return poses[sorted_selected_position[0][0]][:3,3]
 
     
-    def completeness(self, pose_dict):
+    def completeness(self, pose_dict, id = 0):
         
-        threshold = 0.8
+        threshold = 0.87
         poses = []
         k = 0
         for pose in pose_dict.values():
@@ -778,7 +778,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             if view_completeness.item() > threshold:
                 poses.append(pose)
                 panorama_tensor_pil = functions.tensor_to_pil(pano_rgb.unsqueeze(0))
-                panorama_tensor_pil.save(f"test/renderred_pano_{k}.png")
+                panorama_tensor_pil.save(f"test/renderred_pano__{id}_{k}.png")
                 k += 1
         if len(poses):
             return random.choice(poses)
@@ -886,11 +886,11 @@ class Pano2RoomPipeline(torch.nn.Module):
                     # main_select_position = camera_positions[idx]
                     # main_position = self.find_main_position(obj_center = object_centers[id], main_select_position = main_select_position, size = obj_size)
                     poses = self.load_accompanied_poses(obj = object_centers[id], main_cam_pos = camera_positions[idx.item()], size = obj_size, pose_select_num = 3, circle_num = 3)
-                    pose = self.completeness(poses)
+                    pose = self.completeness(poses, id = id)
                     torch.cuda.empty_cache()
                     if pose is not None:
                         eye = torch.eye(4).float().cuda()
-                        cam_pos =  pose[:3,:3] @ pose[:3, 3:]
+                        cam_pos =  pose[:3,:3].T @ pose[:3, 3:]
                         eye[:3, 3:] = cam_pos
                         pose_dict[id] = eye
                         print(f"Found pose for id: {id}: {self.class_names[segmentor.id2type[id]]}")
