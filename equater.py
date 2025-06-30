@@ -856,7 +856,8 @@ class Pano2RoomPipeline(torch.nn.Module):
                     torch.cuda.empty_cache()
                     if pose is not None:
                         eye = torch.eye(4).float().cuda()
-                        eye[:3, 3] = pose[:3, 3]
+                        cam_pos = - pose[:3,:3] @ pose[:3, 3:]
+                        eye[:3, 3:] = cam_pos
                         pose_dict[id] = eye
                         print(f"Found pose for id: {id}: {self.class_names[segmentor.id2type[id]]}")
                         torch.cuda.empty_cache()
