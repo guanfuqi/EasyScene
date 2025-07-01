@@ -553,8 +553,6 @@ class Pano2RoomPipeline(torch.nn.Module):
     def render_mesh_with_poses(self, poses:list):
         # pose world_to_cam44
         for i, world_to_cam in enumerate(poses):
-            world_to_cam[0:1, :] *= -1
-            world_to_cam[1:2, :] *= -1
             __, render_pil = self.project(world_to_cam)
             render_pil.save(os.path.join(self.renderred_mesh_path, f"{i}.png"))
 
@@ -775,7 +773,6 @@ class Pano2RoomPipeline(torch.nn.Module):
         
         threshold = 0.87
         poses = []
-        k = 0
         for pose in pose_dict.values():
             pano_rgb, _, pano_mask = self.render_pano(pose)
             view_completeness = torch.sum((1 - pano_mask * 1))/(pano_mask.shape[0] * pano_mask.shape[1])
@@ -783,8 +780,6 @@ class Pano2RoomPipeline(torch.nn.Module):
             if view_completeness.item() > threshold:
                 poses.append(pose)
                 panorama_tensor_pil = functions.tensor_to_pil(pano_rgb.unsqueeze(0))
-                panorama_tensor_pil.save(f"test/renderred_pano__{id}_{k}.png")
-                k += 1
         if len(poses):
             return random.choice(poses)
         return None
@@ -873,6 +868,8 @@ class Pano2RoomPipeline(torch.nn.Module):
         pose_dict = {}
         inpainted_panos_and_poses = []
         for id in tqdm(range(obj_cnt)):
+            if id == 18:
+                break
             if segmentor.id2type[id] == environment_label:
                 continue
             object_vertice = self.find_object(id) # [N, 3]
@@ -903,10 +900,9 @@ class Pano2RoomPipeline(torch.nn.Module):
                         inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search({1:eye}))
                         break
         # inpainted_panos_and_poses.extend(self.stage_inpaint_pano_greedy_search(pose_dict))
-
+        _, self.poses = self.load_camera_poses(self.pano_center_offset)
         # 从mesh里渲染透视图，这将用来和3DGS的视图配对，计算相似值，
-        poses_for_mesh = self.load_camera_for_mesh_render()
-        self.render_mesh_with_poses(poses= poses_for_mesh)
+        self.render_mesh_with_poses(poses= self.poses)
         torch.cuda.empty_cache()
 
         # Global Completion
@@ -987,7 +983,6 @@ class Pano2RoomPipeline(torch.nn.Module):
             'frames': [],
         }
         
-        _, self.poses = self.load_camera_poses(self.pano_center_offset)
         for i in range(len(self.poses)):
             gt_img = inpainted_img
 
