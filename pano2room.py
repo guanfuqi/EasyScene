@@ -73,7 +73,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             timestamp = str(int(time.time()))[-8:]
             self.setting +=  f"-{timestamp}"
         self.save_path = f'output/Pano2Room-results'
-        self.save_details = False
+        self.save_details = True
 
         if not os.path.exists(self.save_path):
             os.makedirs(self.save_path)
@@ -270,13 +270,13 @@ class Pano2RoomPipeline(torch.nn.Module):
             # save renderred
             panorama_tensor_pil = functions.tensor_to_pil(pano_rgb.unsqueeze(0))
             panorama_tensor_pil.save(f"{self.save_path}/renderred_pano_{key}.png")
-            if self.save_details:
-                depth_pil = Image.fromarray(colorize_single_channel_image(pano_distance.unsqueeze(0)/self.scene_depth_max))
-                depth_pil.save(f"{self.save_path}/renderred_depth_{key}.png")        
-                inpaint_mask_pil = Image.fromarray(pano_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
-                inpaint_mask_pil.save(f"{self.save_path}/mask_{key}.png")  
-                inpaint_mask_pil = Image.fromarray(pano_inpaint_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
-                inpaint_mask_pil.save(f"{self.save_path}/inpaint_mask_{key}.png")  
+            # if self.save_details:
+            #     depth_pil = Image.fromarray(colorize_single_channel_image(pano_distance.unsqueeze(0)/self.scene_depth_max))
+            #     depth_pil.save(f"{self.save_path}/renderred_depth_{key}.png")        
+            #     inpaint_mask_pil = Image.fromarray(pano_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
+            #     inpaint_mask_pil.save(f"{self.save_path}/mask_{key}.png")  
+            #     inpaint_mask_pil = Image.fromarray(pano_inpaint_mask.detach().cpu().squeeze().float().numpy() * 255).convert("RGB")
+            #     inpaint_mask_pil.save(f"{self.save_path}/inpaint_mask_{key}.png")  
 
             # save inpainted
             panorama_tensor_pil = functions.tensor_to_pil(colors.permute(2,0,1).unsqueeze(0))
@@ -440,10 +440,10 @@ class Pano2RoomPipeline(torch.nn.Module):
             loss = (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(render_image, gt_image))
             loss.backward()
 
-            if self.save_details:
-                if iteration % 200 == 0:
-                    functions.write_image(f"{self.save_path}/Train_Ref_rgb_{iteration}.png", gt_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
-                    functions.write_image(f"{self.save_path}/Train_GS_rgb_{iteration}.png", render_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
+            # if self.save_details:
+            #     if iteration % 200 == 0:
+            #         functions.write_image(f"{self.save_path}/Train_Ref_rgb_{iteration}.png", gt_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
+            #         functions.write_image(f"{self.save_path}/Train_GS_rgb_{iteration}.png", render_image.squeeze(0).permute(1,2,0).detach().cpu().numpy().clip(0,1)*255.)
 
             with torch.no_grad():
                 # Densification
@@ -488,7 +488,7 @@ class Pano2RoomPipeline(torch.nn.Module):
             for i, frame in enumerate(framelist):
                 image = Image.fromarray(frame, mode="RGB")
                 image.save(os.path.join(self.save_path, f"Eval_render_rgb_{i}.png"))
-                functions.write_image(f"{self.save_path}/Eval_render_depth_{i}.png", depthlist[i])
+                # functions.write_image(f"{self.save_path}/Eval_render_depth_{i}.png", depthlist[i])
         
         write_video(f"{self.save_path}/GS_render_video.mp4", framelist[6:], fps=30)
         write_video(f"{self.save_path}/GS_depth_video.mp4", depthlist[6:], fps=30)
