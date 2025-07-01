@@ -116,14 +116,14 @@ def calculate_lpips(img1_path, img2_path):
 
 import os
 path_GS = "Pano2Room-results630/renderred_GS"
-path_mesh = "Pano2Room-results630/renderred_mesh"
+path_mesh = "Pano2Room-results701"
 PSNR = []
 SSIM = []
 LPIPS = []
 
 for i in range(141):
     img1_path = os.path.join(path_GS, f"{i}.png")
-    img2_path = os.path.join(path_mesh, f"{i}.png")
+    img2_path = os.path.join(path_mesh, F'Eval_render_rgb_{i}.png')
     LPIPS.append(calculate_lpips(img1_path, img2_path))
     PSNR.append(calculate_psnr(img1_path, img2_path))
     SSIM.append(calculate_ssim(img1_path, img2_path))
