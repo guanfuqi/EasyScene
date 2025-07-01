@@ -6,6 +6,7 @@ __pycache__
 .idea/
 .ipynb_checkpoints/
 /output/*
+! /output/20250312193327/
 /.vscode
 Pano2Room-results*/
 /test/*

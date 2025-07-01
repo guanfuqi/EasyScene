@@ -456,7 +456,7 @@ class Pano2RoomPipeline(torch.nn.Module):
         INPUT:Null OUTPUT:panorama_tensor, depth 
         '''
 
-        image_path = f"input/pano.png"
+        image_path = f"input/pano2.png"
         image = Image.open(image_path)
         if image.size[0] < image.size[1]: # size[0]表示图像的宽，size[1]表示图像的高
             image = image.transpose(Image.TRANSPOSE)
