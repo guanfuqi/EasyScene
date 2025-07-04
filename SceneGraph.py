@@ -67,7 +67,7 @@ Example Input:
 Example Output:
 "A tilted orange metal desk lamp casts warm light across the walnut-finished writing desk, its 1.2-meter surface revealing subtle wood grain patterns under the golden illumination."
 """
-    default_key = "sk-04cbd40be8f84c11a708796474316d93"
+    default_key = ""
 
     def __init__(self, old_text: str = None, ds_key: str = default_key, id: str = datetime.now().strftime('%Y%m%d%H%M%S'), *, exist: bool = False,  exist_path:str = None):
         if exist:
